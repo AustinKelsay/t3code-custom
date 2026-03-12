@@ -3,7 +3,7 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { LOCAL_EXECUTION_TARGET_ID, ThreadId, type TurnId } from "@t3tools/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon, XIcon } from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -24,6 +24,7 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
+import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -403,6 +404,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [selectedTurn?.turnId, selectedTurnId]);
 
   const shouldUseDragRegion = isElectron && mode !== "sheet";
+  const closeDiff = useCallback(() => {
+    if (!routeThreadId) return;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: routeThreadId },
+      replace: true,
+      search: (previous) => stripDiffSearchParams(previous),
+    });
+  }, [navigate, routeThreadId]);
   const headerRow = (
     <>
       <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
@@ -514,6 +524,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <Columns2Icon className="size-3" />
         </Toggle>
       </ToggleGroup>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-7 shrink-0 gap-1.5 px-2 [-webkit-app-region:no-drag]"
+        aria-label="Close diff panel"
+        onClick={closeDiff}
+      >
+        <XIcon className="size-3.5" />
+        <span>Close</span>
+      </Button>
     </>
   );
   const headerRowClassName = cn(

@@ -142,6 +142,27 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
       }),
     );
+
+    it.effect("uses the explicit host for the client websocket URL when available", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "100.72.99.109",
+          port: 3773,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.VITE_WS_URL, "ws://100.72.99.109:3773");
+      }),
+    );
   });
 
   describe("findFirstAvailableOffset", () => {

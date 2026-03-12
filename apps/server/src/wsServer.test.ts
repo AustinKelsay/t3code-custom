@@ -455,6 +455,7 @@ function expectAvailableEditors(value: unknown): void {
 
 describe("WebSocket Server", () => {
   let server: Http.Server | null = null;
+  let upstreamServer: Http.Server | null = null;
   let serverScope: Scope.Closeable | null = null;
   const connections: WebSocket[] = [];
   const tempDirs: string[] = [];
@@ -567,6 +568,18 @@ describe("WebSocket Server", () => {
       ws.close();
     }
     connections.length = 0;
+    if (upstreamServer) {
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer?.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      upstreamServer = null;
+    }
     await closeTestServer();
     server = null;
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
@@ -810,6 +823,64 @@ describe("WebSocket Server", () => {
         );
       }),
     ).toBe(true);
+  });
+
+  it("proxies dev HTTP requests instead of redirecting to the Vite server", async () => {
+    upstreamServer = Http.createServer((request, response) => {
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "X-Upstream-Path": request.url ?? "/",
+      });
+      response.end("<!doctype html><title>vite-proxy</title>");
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstreamServer?.listen(0, "127.0.0.1", (error?: Error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+
+    const upstreamAddress = upstreamServer.address();
+    const upstreamPort =
+      typeof upstreamAddress === "object" && upstreamAddress !== null ? upstreamAddress.port : 0;
+    expect(upstreamPort).toBeGreaterThan(0);
+
+    server = await createTestServer({
+      cwd: "/test/project",
+      devUrl: `http://127.0.0.1:${upstreamPort}`,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await new Promise<{
+      statusCode: number;
+      headers: Http.IncomingHttpHeaders;
+      body: string;
+    }>((resolve, reject) => {
+      const request = Http.get(`http://127.0.0.1:${port}/`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      });
+      request.on("error", reject);
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers["x-upstream-path"]).toBe("/");
+    expect(response.body).toContain("vite-proxy");
   });
 
   it("responds to server.getConfig", async () => {

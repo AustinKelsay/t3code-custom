@@ -71,8 +71,8 @@ import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
-import { GitCoreLive } from "./git/Layers/GitCore.ts";
-import { GitManagerLive } from "./git/Layers/GitManager.ts";
+import { makeGitCore } from "./git/Layers/GitCore.ts";
+import { makeGitManager } from "./git/Layers/GitManager.ts";
 import { GitService, type GitServiceShape } from "./git/Services/GitService.ts";
 import { GitCommandError } from "./git/Errors.ts";
 import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
@@ -464,12 +464,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return cached;
       }
 
-      const services = yield* Effect.scoped(
-        Layer.build(
-          GitCoreLive.pipe(Layer.provide(Layer.succeed(GitService, makeTargetGitService(target)))),
-        ),
+      const remoteGitCore = yield* makeGitCore.pipe(
+        Effect.provideService(GitService, makeTargetGitService(target)),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
-      const remoteGitCore = ServiceMap.getUnsafe(services, GitCore);
       targetGitCoreById.set(target.id, remoteGitCore);
       return remoteGitCore;
     });
@@ -486,16 +485,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     const targetGitCore = yield* getTargetGitCore(target);
-    const services = yield* Effect.scoped(
-      Layer.build(
-        GitManagerLive.pipe(
-          Layer.provide(Layer.succeed(TextGeneration, textGeneration)),
-          Layer.provide(Layer.succeed(GitHubCli, makeTargetGitHubCli(target))),
-          Layer.provide(Layer.succeed(GitCore, targetGitCore)),
-        ),
-      ),
+    const remoteGitManager = yield* makeGitManager.pipe(
+      Effect.provideService(TextGeneration, textGeneration),
+      Effect.provideService(GitHubCli, makeTargetGitHubCli(target)),
+      Effect.provideService(GitCore, targetGitCore),
     );
-    const remoteGitManager = ServiceMap.getUnsafe(services, GitManager);
     targetGitManagerById.set(target.id, remoteGitManager);
     return remoteGitManager;
   });
@@ -710,9 +704,78 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        // In dev mode, redirect to Vite dev server
+        // In dev mode, reverse proxy Vite so the browser origin stays on the
+        // app server port and browser-local state survives reloads.
         if (devUrl) {
-          respond(302, { Location: devUrl.href });
+          if (req.method && req.method !== "GET" && req.method !== "HEAD") {
+            respond(405, { "Content-Type": "text/plain; charset=utf-8" }, "Method Not Allowed");
+            return;
+          }
+
+          const targetUrl = new URL(req.url ?? "/", devUrl);
+          const requestHeaders = new Headers();
+          for (const [name, value] of Object.entries(req.headers)) {
+            if (value === undefined) continue;
+            if (name.toLowerCase() === "host") {
+              requestHeaders.set(name, targetUrl.host);
+              continue;
+            }
+            if (Array.isArray(value)) {
+              for (const entry of value) {
+                requestHeaders.append(name, entry);
+              }
+              continue;
+            }
+            requestHeaders.set(name, value);
+          }
+
+          const upstreamResponseExit = yield* Effect.tryPromise({
+            try: () =>
+              fetch(targetUrl, {
+                method: req.method ?? "GET",
+                headers: requestHeaders,
+                redirect: "manual",
+              }),
+            catch: (cause) => new Error(`Failed to proxy dev request: ${String(cause)}`),
+          }).pipe(Effect.exit);
+          if (Exit.isFailure(upstreamResponseExit)) {
+            respond(502, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Gateway");
+            return;
+          }
+          const upstreamResponse = upstreamResponseExit.value;
+
+          const responseHeaders: Record<string, string> = {};
+          upstreamResponse.headers.forEach((value: string, key: string) => {
+            const normalized = key.toLowerCase();
+            if (
+              normalized === "connection" ||
+              normalized === "keep-alive" ||
+              normalized === "transfer-encoding"
+            ) {
+              return;
+            }
+            responseHeaders[key] = value;
+          });
+
+          if (
+            req.method === "HEAD" ||
+            upstreamResponse.status === 204 ||
+            upstreamResponse.status === 304
+          ) {
+            respond(upstreamResponse.status, responseHeaders);
+            return;
+          }
+
+          const responseBodyExit = yield* Effect.tryPromise({
+            try: () => upstreamResponse.arrayBuffer(),
+            catch: (cause) => new Error(`Failed to read proxied dev response: ${String(cause)}`),
+          }).pipe(Effect.exit);
+          if (Exit.isFailure(responseBodyExit)) {
+            respond(502, { "Content-Type": "text/plain; charset=utf-8" }, "Bad Gateway");
+            return;
+          }
+
+          respond(upstreamResponse.status, responseHeaders, new Uint8Array(responseBodyExit.value));
           return;
         }
 

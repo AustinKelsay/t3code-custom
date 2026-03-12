@@ -147,6 +147,59 @@ function buildMacLauncher(electronBinaryPath) {
   return targetBinaryPath;
 }
 
+function resolveChromeSandboxPath(electronBinaryPath) {
+  return join(dirname(electronBinaryPath), "chrome-sandbox");
+}
+
+function hasValidChromeSandboxPermissions(electronBinaryPath) {
+  try {
+    const stats = statSync(resolveChromeSandboxPath(electronBinaryPath));
+    const isOwnedByRoot = stats.uid === 0;
+    const hasSetuidBit = (stats.mode & 0o4000) === 0o4000;
+    const permissions = stats.mode & 0o7777;
+    return isOwnedByRoot && hasSetuidBit && permissions === 0o4755;
+  } catch {
+    return false;
+  }
+}
+
+function shouldDisableElectronSandbox(electronBinaryPath) {
+  const override = process.env.T3CODE_ELECTRON_SANDBOX?.trim().toLowerCase();
+  if (override === "off" || override === "false" || override === "0") {
+    return true;
+  }
+  if (override === "on" || override === "true" || override === "1") {
+    return false;
+  }
+
+  if (process.platform !== "linux") {
+    return false;
+  }
+
+  return !hasValidChromeSandboxPermissions(electronBinaryPath);
+}
+
+function commandExists(command) {
+  const result = spawnSync("sh", ["-lc", `command -v ${command}`], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+function shouldUseXvfbRun() {
+  if (process.platform !== "linux") {
+    return false;
+  }
+
+  const hasDisplay =
+    Boolean(process.env.DISPLAY?.trim()) || Boolean(process.env.WAYLAND_DISPLAY?.trim());
+  if (hasDisplay) {
+    return false;
+  }
+
+  return commandExists("xvfb-run");
+}
+
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
   let electronBinaryPath;
@@ -165,4 +218,26 @@ export function resolveElectronPath() {
   }
 
   return buildMacLauncher(electronBinaryPath);
+}
+
+export function resolveElectronLaunchArgs(...appArgs) {
+  const electronPath = resolveElectronPath();
+  return shouldDisableElectronSandbox(electronPath) ? ["--no-sandbox", ...appArgs] : appArgs;
+}
+
+export function resolveElectronSpawnSpec(...appArgs) {
+  const electronPath = resolveElectronPath();
+  const electronArgs = resolveElectronLaunchArgs(...appArgs);
+
+  if (shouldUseXvfbRun()) {
+    return {
+      command: "xvfb-run",
+      args: ["-a", electronPath, ...electronArgs],
+    };
+  }
+
+  return {
+    command: electronPath,
+    args: electronArgs,
+  };
 }

@@ -217,7 +217,7 @@ function createGitCommandError(
   });
 }
 
-const makeGitCore = Effect.gen(function* () {
+export const makeGitCore = Effect.gen(function* () {
   const git = yield* GitService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

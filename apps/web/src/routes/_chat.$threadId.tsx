@@ -1,16 +1,14 @@
 import { ThreadId } from "@t3tools/contracts";
-import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { XIcon } from "lucide-react";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
-import {
-  type DiffRouteSearch,
-  parseDiffRouteSearch,
-  stripDiffSearchParams,
-} from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
+import { Button } from "../components/ui/button";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
@@ -20,6 +18,22 @@ const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
+
+const DiffCloseButton = (props: { onCloseDiff: () => void; className?: string }) => {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="default"
+      className={props.className ?? "absolute right-3 top-3 z-30 h-8 gap-1.5 px-2.5 shadow-lg"}
+      aria-label="Close diff panel"
+      onClick={props.onCloseDiff}
+    >
+      <XIcon className="size-3.5" />
+      <span>Close diff</span>
+    </Button>
+  );
+};
 
 const DiffPanelSheet = (props: {
   children: ReactNode;
@@ -41,6 +55,7 @@ const DiffPanelSheet = (props: {
         keepMounted
         className="w-[min(88vw,820px)] max-w-[820px] p-0"
       >
+        <DiffCloseButton onCloseDiff={props.onCloseDiff} />
         {props.children}
       </SheetPopup>
     </Sheet>
@@ -143,9 +158,12 @@ const DiffPanelInlineSidebar = (props: {
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        <Suspense fallback={<DiffLoadingFallback inline />}>
-          <DiffPanel mode="sidebar" />
-        </Suspense>
+        <div className="relative flex h-full w-full min-w-0 flex-col">
+          <DiffCloseButton onCloseDiff={onCloseDiff} />
+          <Suspense fallback={<DiffLoadingFallback inline />}>
+            <DiffPanel mode="sidebar" />
+          </Suspense>
+        </div>
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -170,9 +188,8 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$threadId",
       params: { threadId },
-      search: (previous) => {
-        return stripDiffSearchParams(previous);
-      },
+      replace: true,
+      search: (previous) => stripDiffSearchParams(previous),
     });
   }, [navigate, threadId]);
   const openDiff = useCallback(() => {
@@ -204,6 +221,12 @@ function ChatThreadRouteView() {
   if (!shouldUseDiffSheet) {
     return (
       <>
+        {diffOpen && (
+          <DiffCloseButton
+            onCloseDiff={closeDiff}
+            className="fixed right-3 top-3 z-[120] h-9 gap-1.5 px-3 shadow-xl [-webkit-app-region:no-drag]"
+          />
+        )}
         <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
           <ChatView key={threadId} threadId={threadId} />
         </SidebarInset>
@@ -214,6 +237,12 @@ function ChatThreadRouteView() {
 
   return (
     <>
+      {diffOpen && (
+        <DiffCloseButton
+          onCloseDiff={closeDiff}
+          className="fixed right-3 top-3 z-[120] h-9 gap-1.5 px-3 shadow-xl [-webkit-app-region:no-drag]"
+        />
+      )}
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
         <ChatView key={threadId} threadId={threadId} />
       </SidebarInset>
@@ -228,8 +257,5 @@ function ChatThreadRouteView() {
 
 export const Route = createFileRoute("/_chat/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
-  search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
-  },
   component: ChatThreadRouteView,
 });
