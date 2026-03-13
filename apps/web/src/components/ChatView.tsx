@@ -139,6 +139,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   FileIcon,
+  PaperclipIcon,
   FolderIcon,
   DiffIcon,
   EllipsisIcon,
@@ -688,6 +689,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const composerFileInputRef = useRef<HTMLInputElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -2473,6 +2475,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     removeComposerImageFromDraft(imageId);
   };
 
+  const onComposerAttachButtonClick = () => {
+    const input = composerFileInputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  };
+
+  const onComposerFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+    addComposerImages(files);
+    event.currentTarget.value = "";
+    focusComposer();
+  };
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) {
@@ -3661,6 +3680,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
               className="mx-auto w-full min-w-0 max-w-3xl"
               data-chat-composer-form="true"
             >
+              <input
+                ref={composerFileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                tabIndex={-1}
+                onChange={onComposerFileInputChange}
+              />
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
                   isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
@@ -3843,6 +3871,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
                       )}
                     >
+                      <Button
+                        variant="ghost"
+                        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                        size="sm"
+                        type="button"
+                        onClick={onComposerAttachButtonClick}
+                        disabled={
+                          isComposerApprovalState ||
+                          pendingUserInputs.length > 0 ||
+                          activePendingProgress != null ||
+                          isConnecting
+                        }
+                        title="Attach images"
+                      >
+                        <PaperclipIcon />
+                        {!isComposerFooterCompact ? (
+                          <span className="sr-only sm:not-sr-only">Attach</span>
+                        ) : (
+                          <span className="sr-only">Attach</span>
+                        )}
+                      </Button>
+
                       {/* Provider/model picker */}
                       <ProviderModelPicker
                         compact={isComposerFooterCompact}
