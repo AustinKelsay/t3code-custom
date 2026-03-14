@@ -59,7 +59,7 @@ const MermaidBlock = memo(function MermaidBlock({
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const { copied, handleCopy } = useCopyToClipboard(code);
+  const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   useEffect(() => {
     if (isStreaming) {
@@ -204,15 +204,15 @@ const MermaidBlock = memo(function MermaidBlock({
               type="button"
               size="xs"
               variant="outline"
-              onClick={handleCopy}
-              title={copied ? "Copied" : "Copy Mermaid code"}
+              onClick={() => copyToClipboard(code)}
+              title={isCopied ? "Copied" : "Copy Mermaid code"}
             >
-              {copied ? (
+              {isCopied ? (
                 <CheckIcon className="size-3 text-success" />
               ) : (
                 <CopyIcon className="size-3" />
               )}
-              <span>{copied ? "Copied" : "Copy"}</span>
+              <span>{isCopied ? "Copied" : "Copy"}</span>
             </Button>
           </div>
         </div>

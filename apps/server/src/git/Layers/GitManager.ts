@@ -632,9 +632,10 @@ export const makeGitManager = Effect.gen(function* () {
     commitMessage?: string;
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
+    filePaths?: readonly string[];
   }) =>
     Effect.gen(function* () {
-      const context = yield* gitCore.prepareCommitContext(input.cwd);
+      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
       if (!context) {
         return null;
       }
@@ -674,6 +675,7 @@ export const makeGitManager = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
+    filePaths?: readonly string[],
   ) =>
     Effect.gen(function* () {
       const suggestion =
@@ -682,6 +684,7 @@ export const makeGitManager = Effect.gen(function* () {
           cwd,
           branch,
           ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
         }));
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
@@ -954,12 +957,18 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
-  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
+  const runFeatureBranchStep = (
+    cwd: string,
+    branch: string | null,
+    commitMessage?: string,
+    filePaths?: readonly string[],
+  ) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
       });
       if (!suggestion) {
@@ -1008,6 +1017,7 @@ export const makeGitManager = Effect.gen(function* () {
           input.cwd,
           initialStatus.branch,
           input.commitMessage,
+          input.filePaths,
         );
         branchStep = result.branchStep;
         commitMessageForStep = result.resolvedCommitMessage;
@@ -1023,6 +1033,7 @@ export const makeGitManager = Effect.gen(function* () {
         currentBranch,
         commitMessageForStep,
         preResolvedCommitSuggestion,
+        input.filePaths,
       );
 
       const push = wantsPush

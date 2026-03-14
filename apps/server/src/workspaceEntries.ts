@@ -30,8 +30,18 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 
 interface WorkspaceIndex {
   scannedAt: number;
-  entries: ProjectEntry[];
+  entries: SearchableWorkspaceEntry[];
   truncated: boolean;
+}
+
+interface SearchableWorkspaceEntry extends ProjectEntry {
+  normalizedPath: string;
+  normalizedName: string;
+}
+
+interface RankedWorkspaceEntry {
+  entry: SearchableWorkspaceEntry;
+  score: number;
 }
 
 const workspaceIndexCache = new Map<string, WorkspaceIndex>();
@@ -57,6 +67,15 @@ function basenameOf(input: string): string {
   return input.slice(separatorIndex + 1);
 }
 
+function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEntry {
+  const normalizedPath = entry.path.toLowerCase();
+  return {
+    ...entry,
+    normalizedPath,
+    normalizedName: basenameOf(normalizedPath),
+  };
+}
+
 function normalizeQuery(input: string): string {
   return input
     .trim()
@@ -64,20 +83,120 @@ function normalizeQuery(input: string): string {
     .toLowerCase();
 }
 
-function scoreEntry(entry: ProjectEntry, query: string): number {
+function scoreSubsequenceMatch(value: string, query: string): number | null {
+  if (!query) return 0;
+
+  let queryIndex = 0;
+  let firstMatchIndex = -1;
+  let previousMatchIndex = -1;
+  let gapPenalty = 0;
+
+  for (let valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
+    if (value[valueIndex] !== query[queryIndex]) {
+      continue;
+    }
+
+    if (firstMatchIndex === -1) {
+      firstMatchIndex = valueIndex;
+    }
+    if (previousMatchIndex !== -1) {
+      gapPenalty += valueIndex - previousMatchIndex - 1;
+    }
+
+    previousMatchIndex = valueIndex;
+    queryIndex += 1;
+    if (queryIndex === query.length) {
+      const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
+      const lengthPenalty = Math.min(64, value.length - query.length);
+      return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
+    }
+  }
+
+  return null;
+}
+
+function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | null {
   if (!query) {
     return entry.kind === "directory" ? 0 : 1;
   }
 
-  const normalizedPath = entry.path.toLowerCase();
-  const normalizedName = basenameOf(normalizedPath);
+  const { normalizedPath, normalizedName } = entry;
 
   if (normalizedName === query) return 0;
   if (normalizedPath === query) return 1;
   if (normalizedName.startsWith(query)) return 2;
   if (normalizedPath.startsWith(query)) return 3;
   if (normalizedPath.includes(`/${query}`)) return 4;
-  return 5;
+  if (normalizedName.includes(query)) return 5;
+  if (normalizedPath.includes(query)) return 6;
+
+  const nameFuzzyScore = scoreSubsequenceMatch(normalizedName, query);
+  if (nameFuzzyScore !== null) {
+    return 100 + nameFuzzyScore;
+  }
+
+  const pathFuzzyScore = scoreSubsequenceMatch(normalizedPath, query);
+  if (pathFuzzyScore !== null) {
+    return 200 + pathFuzzyScore;
+  }
+
+  return null;
+}
+
+function compareRankedWorkspaceEntries(
+  left: RankedWorkspaceEntry,
+  right: RankedWorkspaceEntry,
+): number {
+  const scoreDelta = left.score - right.score;
+  if (scoreDelta !== 0) return scoreDelta;
+  return left.entry.path.localeCompare(right.entry.path);
+}
+
+function findInsertionIndex(
+  rankedEntries: RankedWorkspaceEntry[],
+  candidate: RankedWorkspaceEntry,
+): number {
+  let low = 0;
+  let high = rankedEntries.length;
+
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    const current = rankedEntries[middle];
+    if (!current) {
+      break;
+    }
+
+    if (compareRankedWorkspaceEntries(candidate, current) < 0) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
+  }
+
+  return low;
+}
+
+function insertRankedEntry(
+  rankedEntries: RankedWorkspaceEntry[],
+  candidate: RankedWorkspaceEntry,
+  limit: number,
+): void {
+  if (limit <= 0) {
+    return;
+  }
+
+  const insertionIndex = findInsertionIndex(rankedEntries, candidate);
+  if (rankedEntries.length < limit) {
+    rankedEntries.splice(insertionIndex, 0, candidate);
+    return;
+  }
+
+  if (insertionIndex >= limit) {
+    return;
+  }
+
+  rankedEntries.splice(insertionIndex, 0, candidate);
+  rankedEntries.pop();
 }
 
 function isPathInIgnoredDirectory(relativePath: string): boolean {
@@ -246,7 +365,37 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
     .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
   const filePaths = await filterGitIgnoredPaths(cwd, listedPaths);
 
-  const entries = buildWorkspaceEntriesFromFilePaths(filePaths);
+  const directorySet = new Set<string>();
+  for (const filePath of filePaths) {
+    for (const directoryPath of directoryAncestorsOf(filePath)) {
+      if (!isPathInIgnoredDirectory(directoryPath)) {
+        directorySet.add(directoryPath);
+      }
+    }
+  }
+
+  const directoryEntries = [...directorySet]
+    .toSorted((left, right) => left.localeCompare(right))
+    .map(
+      (directoryPath): ProjectEntry => ({
+        path: directoryPath,
+        kind: "directory",
+        parentPath: parentPathOf(directoryPath),
+      }),
+    )
+    .map(toSearchableWorkspaceEntry);
+  const fileEntries = [...new Set(filePaths)]
+    .toSorted((left, right) => left.localeCompare(right))
+    .map(
+      (filePath): ProjectEntry => ({
+        path: filePath,
+        kind: "file",
+        parentPath: parentPathOf(filePath),
+      }),
+    )
+    .map(toSearchableWorkspaceEntry);
+
+  const entries = [...directoryEntries, ...fileEntries];
   return {
     scannedAt: Date.now(),
     entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
@@ -262,7 +411,7 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
   const shouldFilterWithGitIgnore = await isInsideGitWorkTree(cwd);
 
   let pendingDirectories: string[] = [""];
-  const entries: ProjectEntry[] = [];
+  const entries: SearchableWorkspaceEntry[] = [];
   let truncated = false;
 
   while (pendingDirectories.length > 0 && !truncated) {
@@ -329,11 +478,11 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
           continue;
         }
 
-        const entry: ProjectEntry = {
+        const entry = toSearchableWorkspaceEntry({
           path: candidate.relativePath,
           kind: candidate.dirent.isDirectory() ? "directory" : "file",
           parentPath: parentPathOf(candidate.relativePath),
-        };
+        });
         entries.push(entry);
 
         if (candidate.dirent.isDirectory()) {
@@ -448,19 +597,23 @@ export function searchWorkspaceEntriesInIndex(input: {
   truncated: boolean;
 }): ProjectSearchEntriesResult {
   const normalizedQuery = normalizeQuery(input.query);
-  const candidates = normalizedQuery
-    ? input.entries.filter((entry) => entry.path.toLowerCase().includes(normalizedQuery))
-    : input.entries;
+  const limit = Math.max(0, Math.floor(input.limit));
+  const rankedEntries: RankedWorkspaceEntry[] = [];
+  let matchedEntryCount = 0;
 
-  const ranked = candidates.toSorted((left, right) => {
-    const scoreDelta = scoreEntry(left, normalizedQuery) - scoreEntry(right, normalizedQuery);
-    if (scoreDelta !== 0) return scoreDelta;
-    return left.path.localeCompare(right.path);
-  });
+  for (const entry of input.entries.map(toSearchableWorkspaceEntry)) {
+    const score = scoreEntry(entry, normalizedQuery);
+    if (score === null) {
+      continue;
+    }
+
+    matchedEntryCount += 1;
+    insertRankedEntry(rankedEntries, { entry, score }, limit);
+  }
 
   return {
-    entries: ranked.slice(0, input.limit),
-    truncated: input.truncated || ranked.length > input.limit,
+    entries: rankedEntries.map((candidate) => candidate.entry),
+    truncated: input.truncated || matchedEntryCount > limit,
   };
 }
 
