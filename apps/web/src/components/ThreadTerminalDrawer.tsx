@@ -44,10 +44,24 @@ import { readViewportHeight, subscribeToViewportChanges } from "../lib/viewport"
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const MOBILE_TERMINAL_MIN_COLS = 80;
+const TERMINAL_APPROX_CELL_WIDTH_FACTOR = 0.62;
+const TERMINAL_HORIZONTAL_PADDING_PX = 24;
 const TERMINAL_LINE_HEIGHT = 1.2;
 
 function currentTerminalFontSizePx(): number {
   return terminalFontSizePxForUiScale(readUiScaleFromDocument());
+}
+
+function shouldUseWideMobileTerminalLayout(): boolean {
+  return window.matchMedia("(max-width: 767px) and (pointer: coarse)").matches;
+}
+
+function minimumTerminalWidthPx(fontSizePx: number): number {
+  return Math.ceil(
+    fontSizePx * TERMINAL_APPROX_CELL_WIDTH_FACTOR * MOBILE_TERMINAL_MIN_COLS +
+      TERMINAL_HORIZONTAL_PADDING_PX,
+  );
 }
 
 function maxDrawerHeight(): number {
@@ -180,6 +194,7 @@ function TerminalViewport({
   resizeEpoch,
   drawerHeight,
 }: TerminalViewportProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -193,13 +208,30 @@ function TerminalViewport({
 
   useEffect(() => {
     const mount = containerRef.current;
-    if (!mount) return;
+    const scrollContainer = scrollContainerRef.current;
+    if (!mount || !scrollContainer) return;
 
     let disposed = false;
     sessionReadyRef.current = false;
 
     const fitAddon = new FitAddon();
     const initialTerminalFontSizePx = currentTerminalFontSizePx();
+    const applyPreferredTerminalWidth = (activeTerminal?: Terminal | null) => {
+      const nextScrollContainer = scrollContainerRef.current;
+      const nextMount = containerRef.current;
+      if (!nextScrollContainer || !nextMount) {
+        return;
+      }
+      if (!shouldUseWideMobileTerminalLayout()) {
+        nextMount.style.width = "100%";
+        nextMount.style.minWidth = "0px";
+        return;
+      }
+      const fontSizePx = Number(activeTerminal?.options.fontSize ?? initialTerminalFontSizePx);
+      const minimumWidth = minimumTerminalWidthPx(fontSizePx);
+      nextMount.style.width = `${Math.max(nextScrollContainer.clientWidth, minimumWidth)}px`;
+      nextMount.style.minWidth = `${minimumWidth}px`;
+    };
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: TERMINAL_LINE_HEIGHT,
@@ -209,6 +241,7 @@ function TerminalViewport({
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
+    applyPreferredTerminalWidth(terminal);
     terminal.open(mount);
     fitAddon.fit();
 
@@ -463,6 +496,7 @@ function TerminalViewport({
       const nextFontSize = currentTerminalFontSizePx();
       if (activeTerminal.options.fontSize !== nextFontSize) {
         activeTerminal.options.fontSize = nextFontSize;
+        applyPreferredTerminalWidth(activeTerminal);
         activeFitAddon.fit();
         if (sessionReadyRef.current && api) {
           void api.terminal
@@ -585,6 +619,7 @@ function TerminalViewport({
       if (!activeTerminal || !activeFitAddon) return;
       const wasAtBottom =
         activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
+      applyPreferredTerminalWidth(activeTerminal);
       activeFitAddon.fit();
       if (wasAtBottom) {
         activeTerminal.scrollToBottom();
@@ -602,12 +637,40 @@ function TerminalViewport({
         })
         .catch(() => undefined);
     }, 30);
+    const resizeObserver = new ResizeObserver(() => {
+      const activeTerminal = terminalRef.current;
+      const activeFitAddon = fitAddonRef.current;
+      if (!activeTerminal || !activeFitAddon) {
+        return;
+      }
+      const wasAtBottom =
+        activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
+      applyPreferredTerminalWidth(activeTerminal);
+      activeFitAddon.fit();
+      if (wasAtBottom) {
+        activeTerminal.scrollToBottom();
+      }
+      if (!sessionReadyRef.current) {
+        return;
+      }
+      void api.terminal
+        .resize({
+          threadId,
+          targetId,
+          terminalId,
+          cols: activeTerminal.cols,
+          rows: activeTerminal.rows,
+        })
+        .catch(() => undefined);
+    });
+    resizeObserver.observe(scrollContainer);
     void openTerminal();
 
     return () => {
       disposed = true;
       sessionReadyRef.current = false;
       window.clearTimeout(fitTimer);
+      resizeObserver.disconnect();
       unsubscribe();
       inputDisposable.dispose();
       terminalLinksDisposable.dispose();
@@ -649,6 +712,19 @@ function TerminalViewport({
     if (!api || !terminal || !fitAddon) return;
     const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
+      const scrollContainer = scrollContainerRef.current;
+      const mount = containerRef.current;
+      if (scrollContainer && mount) {
+        if (shouldUseWideMobileTerminalLayout()) {
+          const fontSizePx = Number(terminal.options.fontSize ?? currentTerminalFontSizePx());
+          const minimumWidth = minimumTerminalWidthPx(fontSizePx);
+          mount.style.width = `${Math.max(scrollContainer.clientWidth, minimumWidth)}px`;
+          mount.style.minWidth = `${minimumWidth}px`;
+        } else {
+          mount.style.width = "100%";
+          mount.style.minWidth = "0px";
+        }
+      }
       fitAddon.fit();
       if (wasAtBottom) {
         terminal.scrollToBottom();
@@ -670,7 +746,14 @@ function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, resizeEpoch, targetId, terminalId, threadId]);
-  return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
+  return (
+    <div
+      ref={scrollContainerRef}
+      className="terminal-scroll-shell h-full w-full overflow-x-auto overflow-y-hidden rounded-[4px]"
+    >
+      <div ref={containerRef} className="h-full overflow-hidden rounded-[4px]" />
+    </div>
+  );
 }
 
 interface ThreadTerminalDrawerProps {

@@ -85,6 +85,7 @@ import {
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -1019,6 +1020,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
+  const useCompactTerminalPrompt = useMediaQuery({ max: "md", pointer: "coarse" });
   const threadTerminalRuntimeEnv = useMemo(() => {
     if (!activeProjectCwd) return {};
     return projectScriptRuntimeEnv({
@@ -1026,8 +1028,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         cwd: activeProjectCwd,
       },
       worktreePath: activeThreadWorktreePath,
+      compactPathInPrompt: useCompactTerminalPrompt,
     });
-  }, [activeProjectCwd, activeThreadWorktreePath]);
+  }, [activeProjectCwd, activeThreadWorktreePath, useCompactTerminalPrompt]);
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
   const splitTerminalShortcutLabel = useMemo(
@@ -1220,6 +1223,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           cwd: activeProject.cwd,
         },
         worktreePath: options?.worktreePath ?? activeThread.worktreePath ?? null,
+        compactPathInPrompt: useCompactTerminalPrompt,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
@@ -1268,6 +1272,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       terminalState.runningTerminalIds,
       terminalState.terminalIds,
       activeTargetId,
+      useCompactTerminalPrompt,
     ],
   );
   const persistProjectScripts = useCallback(

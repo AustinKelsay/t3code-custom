@@ -243,10 +243,28 @@ input {
   height: 100%;
 }
 
+.thread-terminal-drawer .terminal-scroll-shell {
+  -webkit-overflow-scrolling: touch;
+  -ms-overflow-style: none;
+  background-color: var(--background);
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  touch-action: pan-x pan-y;
+}
+
+.thread-terminal-drawer .terminal-scroll-shell::-webkit-scrollbar {
+  display: none;
+}
+
 .thread-terminal-drawer .xterm .xterm-viewport {
   -webkit-overflow-scrolling: touch;
+  background-color: var(--background) !important;
   overscroll-behavior: contain;
   touch-action: pan-y !important;
+}
+
+.thread-terminal-drawer .xterm .xterm-screen {
+  background-color: var(--background);
 }
 
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {

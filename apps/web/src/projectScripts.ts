@@ -60,6 +60,7 @@ interface ProjectScriptRuntimeEnvInput {
     cwd: string;
   };
   worktreePath?: string | null;
+  compactPathInPrompt?: boolean;
   extraEnv?: Record<string, string>;
 }
 
@@ -71,6 +72,9 @@ export function projectScriptRuntimeEnv(
   };
   if (input.worktreePath) {
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
+  }
+  if (input.compactPathInPrompt) {
+    env.PROMPT_DIRTRIM = "1";
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

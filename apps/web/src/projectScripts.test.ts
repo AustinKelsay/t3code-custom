@@ -70,4 +70,13 @@ describe("projectScripts helpers", () => {
     expect(env.CUSTOM_FLAG).toBe("1");
     expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
   });
+
+  it("compacts the terminal prompt path when requested", () => {
+    const env = projectScriptRuntimeEnv({
+      project: { cwd: "/repo" },
+      compactPathInPrompt: true,
+    });
+
+    expect(env.PROMPT_DIRTRIM).toBe("1");
+  });
 });
