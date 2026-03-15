@@ -34,8 +34,12 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
-import { type TimestampFormat } from "../../appSettings";
+import { type TimestampFormat, useAppSettings } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
+import {
+  toolCallFontSizeRemForUiScale,
+  toolCallMetaFontSizeRemForUiScale,
+} from "../../lib/uiScale";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -87,8 +91,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
 }: MessagesTimelineProps) {
+  const { settings } = useAppSettings();
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+  const toolCallFontSizeRem = toolCallFontSizeRemForUiScale(settings.uiScale);
+  const toolCallMetaFontSizeRem = toolCallMetaFontSizeRemForUiScale(settings.uiScale);
 
   useLayoutEffect(() => {
     const timelineRoot = timelineRootRef.current;
@@ -310,13 +317,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
               {showHeader && (
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-                  <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
+                  <p
+                    className="uppercase tracking-[0.16em] text-muted-foreground/55"
+                    style={{ fontSize: toolCallMetaFontSizeRem }}
+                  >
                     {groupLabel} ({groupedEntries.length})
                   </p>
                   {hasOverflow && (
                     <button
                       type="button"
-                      className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+                      className="uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+                      style={{ fontSize: toolCallMetaFontSizeRem }}
                       onClick={() => onToggleWorkGroup(groupId)}
                     >
                       {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -326,7 +337,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
               <div className="space-y-0.5">
                 {visibleEntries.map((workEntry) => (
-                  <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
+                  <SimpleWorkEntryRow
+                    key={`work-row:${workEntry.id}`}
+                    workEntry={workEntry}
+                    fontSizeRem={toolCallFontSizeRem}
+                    metaFontSizeRem={toolCallMetaFontSizeRem}
+                  />
                 ))}
               </div>
             </div>
@@ -726,8 +742,10 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
+  fontSizeRem: string;
+  metaFontSizeRem: string;
 }) {
-  const { workEntry } = props;
+  const { workEntry, fontSizeRem, metaFontSizeRem } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -747,10 +765,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p
             className={cn(
-              "truncate text-[11px] leading-5",
+              "truncate leading-5",
               workToneClass(workEntry.tone),
               preview ? "text-muted-foreground/70" : "",
             )}
+            style={{ fontSize: fontSizeRem }}
             title={displayText}
           >
             <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
@@ -765,14 +784,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
             <span
               key={`${workEntry.id}:${filePath}`}
-              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-muted-foreground/75"
+              style={{ fontSize: metaFontSizeRem }}
               title={filePath}
             >
               {filePath}
             </span>
           ))}
           {(workEntry.changedFiles?.length ?? 0) > 4 && (
-            <span className="px-1 text-[10px] text-muted-foreground/55">
+            <span className="px-1 text-muted-foreground/55" style={{ fontSize: metaFontSizeRem }}>
               +{(workEntry.changedFiles?.length ?? 0) - 4}
             </span>
           )}
