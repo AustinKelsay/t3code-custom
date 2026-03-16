@@ -23,6 +23,30 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there are shared logic that can be extracted to a separate module. Duplicate logic across mulitple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
+### Upstream Merge Safety
+
+- Prefer creating new files for custom T3 behavior instead of heavily editing upstream/core files.
+- Keep edits to upstream/core files as thin integration points whenever possible: import the extracted module and wire it in with a small, obvious change.
+- For diff-viewer customizations, prefer extracted modules under `apps/web/src/components/diff/` rather than expanding `apps/web/src/components/DiffPanel.tsx`.
+- If a feature can be isolated into a helper, hook, or leaf component, extract it. Reducing future merge conflicts with `main` is an explicit goal.
+
+### UI Change Expectations
+
+- Treat mobile and desktop as first-class targets. Do not ship desktop-only fixes when the affected feature is also used on mobile.
+- When adding global UI settings such as sizing, make them actually flow through the app. Avoid one-off component sizing that bypasses the global setting.
+- Keep mobile headers compact. If the header starts to crowd the viewport, extract or collapse controls instead of adding more top-level buttons.
+
+### Live Web Deploy Flow
+
+- When the user asks to make a web change live, rebuild `apps/web` first, then rebuild `apps/server`, then restart `t3code-web.service`.
+- Use this exact order:
+  1. `cd apps/web && bun run build`
+  2. `cd apps/server && bun run build`
+  3. `systemctl --user restart t3code-web.service`
+- After restarting, verify the deploy instead of assuming it worked. Check both:
+  - service state via `systemctl --user show t3code-web.service -p MainPID -p ExecMainStartTimestamp -p ActiveState -p SubState`
+  - rebuilt artifact timestamps for `apps/web/dist/index.html`, `apps/server/dist/index.mjs`, and `apps/server/dist/client/index.html`
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
