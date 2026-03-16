@@ -47,6 +47,7 @@ import {
   ExecutionTargetRemoveInput,
   ExecutionTargetUpsertInput,
 } from "./executionTarget";
+import { ThreadNotesGetInput, ThreadNotesUpsertInput } from "./threadNotes";
 import {
   PortForwardCloseInput,
   PortForwardEvent,
@@ -64,6 +65,8 @@ export const WS_METHODS = {
   projectsListDirectory: "projects.listDirectory",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  threadNotesGet: "threadNotes.get",
+  threadNotesUpsert: "threadNotes.upsert",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -138,6 +141,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectsListDirectory, ProjectListDirectoryInput),
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.threadNotesGet, ThreadNotesGetInput),
+  tagRequestBody(WS_METHODS.threadNotesUpsert, ThreadNotesUpsertInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

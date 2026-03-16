@@ -62,6 +62,11 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  ThreadNotesDocument,
+  ThreadNotesGetInput,
+  ThreadNotesUpsertInput,
+} from "./threadNotes";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -152,6 +157,10 @@ export interface NativeApi {
     listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  threads: {
+    getNotes: (input: ThreadNotesGetInput) => Promise<ThreadNotesDocument | null>;
+    upsertNotes: (input: ThreadNotesUpsertInput) => Promise<ThreadNotesDocument>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

@@ -374,6 +374,7 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     return {
       isRepo: true,
       hasOriginRemote: true,
+      originWebUrl: "https://github.com/pingdotgg/t3code",
       branches: [
         {
           name: "main",

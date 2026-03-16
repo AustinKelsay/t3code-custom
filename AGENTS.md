@@ -39,13 +39,18 @@ Long term maintainability is a core priority. If you add new functionality, firs
 ### Live Web Deploy Flow
 
 - When the user asks to make a web change live, rebuild `apps/web` first, then rebuild `apps/server`, then restart `t3code-web.service`.
+- Do not build `apps/web` and `apps/server` in parallel for a deploy. The server build copies the current web build into `apps/server/dist/client`, so parallel builds can deploy stale frontend assets even when both builds succeed.
 - Use this exact order:
   1. `cd apps/web && bun run build`
   2. `cd apps/server && bun run build`
   3. `systemctl --user restart t3code-web.service`
+- In this environment, `bun` may not be on `PATH` inside tool-run shells. If `bun: command not found` appears, prefix commands with `export PATH="$HOME/.bun/bin:$PATH" && ...`.
 - After restarting, verify the deploy instead of assuming it worked. Check both:
   - service state via `systemctl --user show t3code-web.service -p MainPID -p ExecMainStartTimestamp -p ActiveState -p SubState`
   - rebuilt artifact timestamps for `apps/web/dist/index.html`, `apps/server/dist/index.mjs`, and `apps/server/dist/client/index.html`
+- The tool wrapper may report `systemctl --user restart t3code-web.service` as `aborted` even when the restart actually succeeded. Treat `systemctl --user show ...`, artifact timestamps, and the live served asset hash as the source of truth.
+- When verifying the live frontend, also check the served asset hash directly, for example:
+  - `curl -s "$APP_URL" | rg -o '/assets/index-[^" ]+\\.(js|css)'`
 
 ## Package Roles
 

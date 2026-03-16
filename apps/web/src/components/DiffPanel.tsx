@@ -33,8 +33,14 @@ import {
   getRenderablePatch,
   resolveFileDiffPath,
 } from "./diff/diffRendering";
+import { DiffResizableSidebar } from "./diff/DiffResizableSidebar";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+
 type DiffThemeType = "light" | "dark";
+
+const FULL_DIFF_FILE_TREE_WIDTH_STORAGE_KEY = "full-diff-file-tree-width";
+const FULL_DIFF_FILE_TREE_DEFAULT_WIDTH = 280;
+
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   onCloseDiff?: () => void;
@@ -487,30 +493,50 @@ export default function DiffPanel({
         </div>
       ) : variant === "full" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-          {showFileTree && (
-            <DiffFileTree
-              activeFilePath={activeFilePath}
-              expandedDirectories={expandedDirectories}
-              nodes={fileTreeNodes}
-              onOpenInEditor={openDiffFileInEditor}
-              onScrollViewport={(scrollTop) => {
-                if (!diffFileTreeScrollStateKey) {
-                  return;
-                }
-                writeDiffFileTreeScrollTop(diffFileTreeScrollStateKey, scrollTop);
-              }}
-              onSelectFile={selectFile}
-              onToggleDirectory={toggleDirectory}
-              scrollViewportRef={fileTreeViewportRef}
-              theme={resolvedTheme === "light" ? "light" : "dark"}
-              {...(shouldCollapseFileTreeOnMobile
-                ? {
-                    onToggleVisibility: () => setIsMobileFileTreeOpen(false),
-                    showVisibilityToggle: true,
+          {showFileTree &&
+            (shouldCollapseFileTreeOnMobile ? (
+              <DiffFileTree
+                activeFilePath={activeFilePath}
+                expandedDirectories={expandedDirectories}
+                nodes={fileTreeNodes}
+                onOpenInEditor={openDiffFileInEditor}
+                onScrollViewport={(scrollTop) => {
+                  if (!diffFileTreeScrollStateKey) {
+                    return;
                   }
-                : {})}
-            />
-          )}
+                  writeDiffFileTreeScrollTop(diffFileTreeScrollStateKey, scrollTop);
+                }}
+                onSelectFile={selectFile}
+                onToggleDirectory={toggleDirectory}
+                onToggleVisibility={() => setIsMobileFileTreeOpen(false)}
+                scrollViewportRef={fileTreeViewportRef}
+                showVisibilityToggle
+                theme={resolvedTheme === "light" ? "light" : "dark"}
+              />
+            ) : (
+              <DiffResizableSidebar
+                defaultWidth={FULL_DIFF_FILE_TREE_DEFAULT_WIDTH}
+                storageKey={FULL_DIFF_FILE_TREE_WIDTH_STORAGE_KEY}
+              >
+                <DiffFileTree
+                  activeFilePath={activeFilePath}
+                  className="h-full w-full shrink-0"
+                  expandedDirectories={expandedDirectories}
+                  nodes={fileTreeNodes}
+                  onOpenInEditor={openDiffFileInEditor}
+                  onScrollViewport={(scrollTop) => {
+                    if (!diffFileTreeScrollStateKey) {
+                      return;
+                    }
+                    writeDiffFileTreeScrollTop(diffFileTreeScrollStateKey, scrollTop);
+                  }}
+                  onSelectFile={selectFile}
+                  onToggleDirectory={toggleDirectory}
+                  scrollViewportRef={fileTreeViewportRef}
+                  theme={resolvedTheme === "light" ? "light" : "dark"}
+                />
+              </DiffResizableSidebar>
+            ))}
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             {shouldCollapseFileTreeOnMobile &&
               renderablePatch?.kind === "files" &&

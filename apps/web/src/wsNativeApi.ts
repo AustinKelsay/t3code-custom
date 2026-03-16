@@ -123,6 +123,10 @@ export function createWsNativeApi(): NativeApi {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
+    threads: {
+      getNotes: (input) => transport.request(WS_METHODS.threadNotesGet, input),
+      upsertNotes: (input) => transport.request(WS_METHODS.threadNotesUpsert, input),
+    },
     shell: {
       openInEditor: (cwd, editor) =>
         transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),

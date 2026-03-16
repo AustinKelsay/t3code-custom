@@ -28,6 +28,7 @@ import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
 import Migration0014 from "./Migrations/014_RemoteTargetColumns.ts";
 import Migration0015 from "./Migrations/015_ExecutionTargets.ts";
 import Migration0016 from "./Migrations/016_ProjectTargetColumns.ts";
+import Migration0017 from "./Migrations/017_ThreadNotes.ts";
 import { Effect } from "effect";
 
 /**
@@ -57,6 +58,7 @@ const loader = Migrator.fromRecord({
   "14_RemoteTargetColumns": Migration0014,
   "15_ExecutionTargets": Migration0015,
   "16_ProjectTargetColumns": Migration0016,
+  "17_ThreadNotes": Migration0017,
 });
 
 /**

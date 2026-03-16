@@ -11,6 +11,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { ExecutionTargetRepositoryLive } from "./persistence/Layers/ExecutionTargets";
+import { ThreadNotesRepositoryLive } from "./persistence/Layers/ThreadNotes";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
@@ -151,5 +152,6 @@ export function makeServerRuntimeServicesLayer() {
     KeybindingsLive,
     executionTargetServiceLayer,
     executionTargetRuntimeLayer,
+    ThreadNotesRepositoryLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

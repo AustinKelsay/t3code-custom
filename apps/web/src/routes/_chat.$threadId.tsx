@@ -229,7 +229,8 @@ function ChatThreadRouteView() {
   }
 
   const fullDiffOpen = Boolean(matchRoute({ to: "/$threadId/diff", params: { threadId } }));
-  if (fullDiffOpen) {
+  const notesOpen = Boolean(matchRoute({ to: "/$threadId/notes", params: { threadId } }));
+  if (fullDiffOpen || notesOpen) {
     return <Outlet />;
   }
 

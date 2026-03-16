@@ -1,6 +1,7 @@
 import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { GitCommandError } from "../Errors.ts";
+import { parseGitHubWebUrlFromRemoteUrl } from "../githubRemote.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 
@@ -1071,7 +1072,7 @@ export const makeGitCore = Effect.gen(function* () {
       if (localBranchResult.code !== 0) {
         const stderr = localBranchResult.stderr.trim();
         if (stderr.toLowerCase().includes("not a git repository")) {
-          return { branches: [], isRepo: false, hasOriginRemote: false };
+          return { branches: [], isRepo: false, hasOriginRemote: false, originWebUrl: null };
         }
         return yield* createGitCommandError(
           "GitCore.listBranches",
@@ -1113,33 +1114,42 @@ export const makeGitCore = Effect.gen(function* () {
         ),
       );
 
-      const [defaultRef, worktreeList, remoteBranchResult, remoteNamesResult, branchLastCommit] =
-        yield* Effect.all(
-          [
-            executeGit(
-              "GitCore.listBranches.defaultRef",
-              input.cwd,
-              ["symbolic-ref", "refs/remotes/origin/HEAD"],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ),
-            executeGit(
-              "GitCore.listBranches.worktreeList",
-              input.cwd,
-              ["worktree", "list", "--porcelain"],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ),
-            remoteBranchResultEffect,
-            remoteNamesResultEffect,
-            branchRecencyPromise,
-          ],
-          { concurrency: "unbounded" },
-        );
+      const [
+        defaultRef,
+        worktreeList,
+        remoteBranchResult,
+        remoteNamesResult,
+        originRemoteUrl,
+        branchLastCommit,
+      ] = yield* Effect.all(
+        [
+          executeGit(
+            "GitCore.listBranches.defaultRef",
+            input.cwd,
+            ["symbolic-ref", "refs/remotes/origin/HEAD"],
+            {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            },
+          ),
+          executeGit(
+            "GitCore.listBranches.worktreeList",
+            input.cwd,
+            ["worktree", "list", "--porcelain"],
+            {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            },
+          ),
+          remoteBranchResultEffect,
+          remoteNamesResultEffect,
+          readConfigValue(input.cwd, "remote.origin.url").pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          ),
+          branchRecencyPromise,
+        ],
+        { concurrency: "unbounded" },
+      );
 
       const remoteNames =
         remoteNamesResult.code === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
@@ -1237,7 +1247,12 @@ export const makeGitCore = Effect.gen(function* () {
 
       const branches = [...localBranches, ...remoteBranches];
 
-      return { branches, isRepo: true, hasOriginRemote: remoteNames.includes("origin") };
+      return {
+        branches,
+        isRepo: true,
+        hasOriginRemote: remoteNames.includes("origin"),
+        originWebUrl: parseGitHubWebUrlFromRemoteUrl(originRemoteUrl),
+      };
     });
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>

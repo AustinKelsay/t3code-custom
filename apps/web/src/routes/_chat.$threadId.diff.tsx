@@ -9,10 +9,10 @@ import {
   DiffPanelLoadingState,
   DiffPanelShell,
 } from "../components/DiffPanelShell";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { ThreadPageHeader } from "../components/chat/ThreadPageHeader";
 import { type DiffRouteSearch, parseDiffRouteSearch } from "../diffRouteSearch";
 import { APP_VIEWPORT_CSS_HEIGHT } from "../lib/viewport";
-import { useStore } from "../store";
+import { useThreadRouteData } from "../threadRouteData";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 function FullDiffLoadingFallback() {
@@ -29,12 +29,10 @@ function FullDiffRouteView() {
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const threadsHydrated = useStore((store) => store.threadsHydrated);
-  const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
-  const draftThreadExists = useComposerDraftStore((store) =>
-    Object.hasOwn(store.draftThreadsByThreadId, threadId),
-  );
-  const routeThreadExists = threadExists || draftThreadExists;
+  const { activeProject, activeThread, routeThreadExists, threadsHydrated } =
+    useThreadRouteData(threadId);
+  const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const targetId = activeThread?.targetId ?? null;
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -55,27 +53,44 @@ function FullDiffRouteView() {
       className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground"
       style={{ height: APP_VIEWPORT_CSS_HEIGHT }}
     >
-      <DiffWorkerPoolProvider>
-        <Suspense fallback={<FullDiffLoadingFallback />}>
-          <DiffPanel
-            mode="sheet"
-            variant="full"
-            onCloseDiff={() => {
-              void navigate({
-                to: "/$threadId",
-                params: { threadId },
-                replace: true,
-                search: {
-                  diff: "1",
-                  ...(search.diffScope ? { diffScope: search.diffScope } : {}),
-                  ...(search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
-                  ...(search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
-                },
-              });
-            }}
-          />
-        </Suspense>
-      </DiffWorkerPoolProvider>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {activeThread && (
+          <header className="border-b border-border px-3 py-2 sm:px-5 sm:py-3">
+            <ThreadPageHeader
+              activeProjectName={activeProject?.name}
+              activeTab="code"
+              activeThreadId={activeThread.id}
+              activeThreadTitle={activeThread.title}
+              gitCwd={gitCwd}
+              openInCwd={gitCwd}
+              targetId={targetId}
+            />
+          </header>
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <DiffWorkerPoolProvider>
+            <Suspense fallback={<FullDiffLoadingFallback />}>
+              <DiffPanel
+                mode="sheet"
+                variant="full"
+                onCloseDiff={() => {
+                  void navigate({
+                    to: "/$threadId",
+                    params: { threadId },
+                    replace: true,
+                    search: {
+                      diff: "1",
+                      ...(search.diffScope ? { diffScope: search.diffScope } : {}),
+                      ...(search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
+                      ...(search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
+                    },
+                  });
+                }}
+              />
+            </Suspense>
+          </DiffWorkerPoolProvider>
+        </div>
+      </div>
     </SidebarInset>
   );
 }

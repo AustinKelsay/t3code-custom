@@ -320,6 +320,41 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards thread notes fetches to the websocket thread notes method", async () => {
+    requestMock.mockResolvedValue(null);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.threads.getNotes({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.threadNotesGet, {
+      threadId: "thread-1",
+    });
+  });
+
+  it("forwards thread notes saves to the websocket thread notes method", async () => {
+    requestMock.mockResolvedValue({
+      threadId: "thread-1",
+      notes: "{}",
+      createdAt: "2026-02-24T00:00:00.000Z",
+      updatedAt: "2026-02-24T00:00:00.000Z",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.threads.upsertNotes({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      notes: "{}",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.threadNotesUpsert, {
+      threadId: "thread-1",
+      notes: "{}",
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

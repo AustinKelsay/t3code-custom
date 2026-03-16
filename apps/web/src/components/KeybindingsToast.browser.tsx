@@ -142,6 +142,7 @@ function resolveWsRpc(tag: string): unknown {
     return {
       isRepo: true,
       hasOriginRemote: true,
+      originWebUrl: "https://github.com/pingdotgg/t3code",
       branches: [{ name: "main", current: true, isDefault: true, worktreePath: null }],
     };
   }

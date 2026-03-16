@@ -40,6 +40,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Result,
@@ -100,6 +101,7 @@ import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson"
 import { ExecutionTargetService } from "./executionTarget/Services/ExecutionTargetService.ts";
 import { runTargetProcess } from "./executionTarget/targetProcess.ts";
 import { buildRemoteShellScript, shellQuote } from "./executionTarget/ssh.ts";
+import { ThreadNotesRepository } from "./persistence/Services/ThreadNotes.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -280,7 +282,8 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
-  | ExecutionTargetService;
+  | ExecutionTargetService
+  | ThreadNotesRepository;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -323,6 +326,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const executionTargets = yield* ExecutionTargetService;
+  const threadNotesRepository = yield* ThreadNotesRepository;
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -1216,6 +1220,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: writeTarget.relativePath };
+      }
+
+      case WS_METHODS.threadNotesGet: {
+        const body = stripRequestTag(request.body);
+        return yield* threadNotesRepository.getByThreadId(body).pipe(
+          Effect.map((document) =>
+            Option.match(document, {
+              onNone: () => null,
+              onSome: (value) => value,
+            }),
+          ),
+        );
+      }
+
+      case WS_METHODS.threadNotesUpsert: {
+        const body = stripRequestTag(request.body);
+        return yield* threadNotesRepository.upsert(body);
       }
 
       case WS_METHODS.shellOpenInEditor: {
