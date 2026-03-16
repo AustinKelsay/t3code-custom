@@ -86,6 +86,7 @@ import {
   useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { resolveThreadTargetId } from "../threadTarget";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
@@ -328,15 +329,22 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const projectTargetById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.targetId] as const)),
+    [projects],
+  );
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
         threadId: thread.id,
         branch: thread.branch,
-        targetId: thread.targetId ?? LOCAL_EXECUTION_TARGET_ID,
+        targetId: resolveThreadTargetId({
+          thread,
+          projectTargetId: projectTargetById.get(thread.projectId) ?? null,
+        }),
         cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
       })),
-    [projectCwdById, threads],
+    [projectCwdById, projectTargetById, threads],
   );
   const threadGitStatusTargets = useMemo(
     () =>
@@ -689,7 +697,10 @@ export default function Sidebar() {
       try {
         await removeWorktreeMutation.mutateAsync({
           cwd: threadProject.cwd,
-          targetId: thread.targetId ?? LOCAL_EXECUTION_TARGET_ID,
+          targetId: resolveThreadTargetId({
+            thread,
+            projectTargetId: threadProject.targetId,
+          }),
           path: orphanedWorktreePath,
           force: true,
         });
@@ -1025,10 +1036,10 @@ export default function Sidebar() {
           activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
-        const shortcutTargetId =
-          activeThread?.targetId ??
-          activeDraftThread?.targetId ??
-          projects.find((project) => project.id === projectId)?.targetId;
+        const shortcutTargetId = resolveThreadTargetId({
+          thread: activeThread ?? activeDraftThread ?? null,
+          projectTargetId: projects.find((project) => project.id === projectId)?.targetId ?? null,
+        });
         void handleNewThread(projectId, shortcutTargetId ? { targetId: shortcutTargetId } : {});
         return;
       }
@@ -1037,10 +1048,10 @@ export default function Sidebar() {
       const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
-      const shortcutTargetId =
-        activeThread?.targetId ??
-        activeDraftThread?.targetId ??
-        projects.find((project) => project.id === projectId)?.targetId;
+      const shortcutTargetId = resolveThreadTargetId({
+        thread: activeThread ?? activeDraftThread ?? null,
+        projectTargetId: projects.find((project) => project.id === projectId)?.targetId ?? null,
+      });
       void handleNewThread(projectId, {
         ...(shortcutTargetId ? { targetId: shortcutTargetId } : {}),
         branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,

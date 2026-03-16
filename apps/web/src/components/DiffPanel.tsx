@@ -1,7 +1,7 @@
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { LOCAL_EXECUTION_TARGET_ID, ThreadId, type TurnId } from "@t3tools/contracts";
+import { ThreadId, type TurnId } from "@t3tools/contracts";
 import { PanelLeftIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
@@ -15,6 +15,7 @@ import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
+import { resolveThreadTargetId } from "../threadTarget";
 import { Button } from "./ui/button";
 import { useAppSettings } from "../appSettings";
 import {
@@ -81,7 +82,10 @@ export default function DiffPanel({
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const targetId = activeThread?.targetId ?? LOCAL_EXECUTION_TARGET_ID;
+  const targetId = resolveThreadTargetId({
+    thread: activeThread,
+    projectTargetId: activeProject?.targetId ?? null,
+  });
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions({ cwd: activeCwd ?? null, targetId }));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =

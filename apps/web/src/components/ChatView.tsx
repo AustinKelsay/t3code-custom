@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  LOCAL_EXECUTION_TARGET_ID,
   type KeybindingCommand,
   type CodexReasoningEffort,
   type MessageId,
@@ -67,6 +66,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { resolveThreadTargetId } from "../threadTarget";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -387,8 +387,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
-  const activeTargetId =
-    activeThread?.targetId ?? activeProject?.targetId ?? LOCAL_EXECUTION_TARGET_ID;
+  const activeTargetId = resolveThreadTargetId({
+    thread: activeThread,
+    projectTargetId: activeProject?.targetId ?? null,
+  });
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1226,6 +1228,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
         ? {
             threadId: activeThreadId,
+            targetId: activeTargetId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1234,6 +1237,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
         : {
             threadId: activeThreadId,
+            targetId: activeTargetId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -2371,6 +2375,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           commandId: newCommandId(),
           threadId: threadIdForSend,
           projectId: activeProject.id,
+          targetId: activeTargetId,
           title,
           model: threadCreateModel,
           runtimeMode,
@@ -2825,6 +2830,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         commandId: newCommandId(),
         threadId: nextThreadId,
         projectId: activeProject.id,
+        targetId: activeTargetId,
         title: nextThreadTitle,
         model: nextThreadModel,
         runtimeMode,
@@ -2891,6 +2897,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
+    activeTargetId,
     activeThread,
     beginSendPhase,
     isConnecting,

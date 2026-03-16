@@ -12,6 +12,7 @@ describe("remoteCodex", () => {
     const command = buildRemoteCodexResolveCommand();
 
     expect(command).toContain('for candidate in "${SHELL:-}"');
+    expect(command).toContain('output="$("$candidate" -ilc');
     expect(command).toContain('output="$("$candidate" -lc');
     expect(command).toContain("$HOME/.npm-global/bin/codex");
     expect(command).toContain("$HOME/.local/bin/codex");
@@ -33,6 +34,7 @@ describe("remoteCodex", () => {
     });
 
     expect(script).toContain('for candidate in "${SHELL:-}"');
+    expect(script).toContain('if "$candidate" -ilc');
     expect(script).toContain('if "$candidate" -lc');
     expect(script).toContain("/remote/worktree");
     expect(script).toContain("CODEX_HOME");
