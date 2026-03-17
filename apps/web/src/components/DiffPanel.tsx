@@ -29,6 +29,7 @@ import {
   writeDiffFileTreeScrollTop,
 } from "./diff/diffFileTreeScrollState";
 import {
+  buildDiffSelectionRenderKey,
   buildFileDiffRenderKey,
   DIFF_PANEL_UNSAFE_CSS,
   getRenderablePatch,
@@ -210,6 +211,19 @@ export default function DiffPanel({
     : selectedTurn
       ? selectedTurnCheckpointDiff
       : conversationCheckpointDiff;
+  const diffSelectionRenderKey = useMemo(
+    () =>
+      buildDiffSelectionRenderKey({
+        patch: selectedPatch,
+        scope: [
+          routeThreadId ?? "no-thread",
+          isUncommittedSelection ? "uncommitted" : (selectedTurnId ?? "conversation"),
+          variant,
+        ].join(":"),
+        theme: resolvedTheme as DiffThemeType,
+      }),
+    [isUncommittedSelection, resolvedTheme, routeThreadId, selectedPatch, selectedTurnId, variant],
+  );
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -357,7 +371,10 @@ export default function DiffPanel({
         const rest = stripDiffSearchParams(previous as Record<string, unknown>);
         return {
           ...rest,
-          ...(variant === "full" ? {} : { diff: "1" as const }),
+          diff: variant === "full" ? undefined : ("1" as const),
+          diffScope: undefined,
+          diffTurnId: undefined,
+          diffFilePath: undefined,
           ...(next.diffScope === "uncommitted" ? { diffScope: "uncommitted" as const } : {}),
           ...(next.diffTurnId ? { diffTurnId: next.diffTurnId } : {}),
           ...(next.diffFilePath ? { diffFilePath: next.diffFilePath } : {}),
@@ -436,10 +453,18 @@ export default function DiffPanel({
     void navigate({
       to: "/$threadId/diff",
       params: { threadId: routeThreadId },
-      search: {
-        ...(isUncommittedSelection ? { diffScope: "uncommitted" as const } : {}),
-        ...(selectedTurnId ? { diffTurnId: selectedTurnId } : {}),
-        ...(activeFilePath ? { diffFilePath: activeFilePath } : {}),
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous as Record<string, unknown>);
+        return {
+          ...rest,
+          diff: undefined,
+          diffScope: undefined,
+          diffTurnId: undefined,
+          diffFilePath: undefined,
+          ...(isUncommittedSelection ? { diffScope: "uncommitted" as const } : {}),
+          ...(selectedTurnId ? { diffTurnId: selectedTurnId } : {}),
+          ...(activeFilePath ? { diffFilePath: activeFilePath } : {}),
+        };
       },
     });
   }, [activeFilePath, isUncommittedSelection, navigate, routeThreadId, selectedTurnId]);
@@ -500,6 +525,7 @@ export default function DiffPanel({
           {showFileTree &&
             (shouldCollapseFileTreeOnMobile ? (
               <DiffFileTree
+                key={`${diffSelectionRenderKey}:mobile-file-tree`}
                 activeFilePath={activeFilePath}
                 expandedDirectories={expandedDirectories}
                 nodes={fileTreeNodes}
@@ -523,6 +549,7 @@ export default function DiffPanel({
                 storageKey={FULL_DIFF_FILE_TREE_WIDTH_STORAGE_KEY}
               >
                 <DiffFileTree
+                  key={`${diffSelectionRenderKey}:desktop-file-tree`}
                   activeFilePath={activeFilePath}
                   className="h-full w-full shrink-0"
                   expandedDirectories={expandedDirectories}
@@ -579,6 +606,7 @@ export default function DiffPanel({
                 )
               ) : renderablePatch.kind === "files" ? (
                 <Virtualizer
+                  key={`${diffSelectionRenderKey}:full-virtualizer`}
                   className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
                   config={{
                     overscrollSize: 600,
@@ -592,7 +620,7 @@ export default function DiffPanel({
                     {visibleFileDiffs.map((fileDiff) => {
                       const filePath = resolveFileDiffPath(fileDiff);
                       const fileKey = buildFileDiffRenderKey(fileDiff);
-                      const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                      const themedFileKey = `${diffSelectionRenderKey}:${fileKey}:${resolvedTheme}`;
                       return (
                         <div
                           key={themedFileKey}
@@ -661,6 +689,7 @@ export default function DiffPanel({
             )
           ) : renderablePatch.kind === "files" ? (
             <Virtualizer
+              key={`${diffSelectionRenderKey}:compact-virtualizer`}
               className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
               config={{
                 overscrollSize: 600,
@@ -670,7 +699,7 @@ export default function DiffPanel({
               {visibleFileDiffs.map((fileDiff) => {
                 const filePath = resolveFileDiffPath(fileDiff);
                 const fileKey = buildFileDiffRenderKey(fileDiff);
-                const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                const themedFileKey = `${diffSelectionRenderKey}:${fileKey}:${resolvedTheme}`;
                 return (
                   <div
                     key={themedFileKey}

@@ -1,5 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
-import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Suspense, useEffect } from "react";
 
 import DiffPanel from "../components/DiffPanel";
@@ -10,7 +10,7 @@ import {
   DiffPanelShell,
 } from "../components/DiffPanelShell";
 import { ThreadPageHeader } from "../components/chat/ThreadPageHeader";
-import { type DiffRouteSearch, parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch } from "../diffRouteSearch";
 import { APP_VIEWPORT_CSS_HEIGHT } from "../lib/viewport";
 import { resolveThreadTargetId } from "../threadTarget";
 import { useThreadRouteData } from "../threadRouteData";
@@ -101,8 +101,5 @@ function FullDiffRouteView() {
 
 export const Route = createFileRoute("/_chat/$threadId/diff")({
   validateSearch: (search) => parseDiffRouteSearch(search),
-  search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diffScope", "diffTurnId", "diffFilePath"])],
-  },
   component: FullDiffRouteView,
 });
