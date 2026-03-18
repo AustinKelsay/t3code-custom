@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  parseExistingWorktreePathFromCheckoutError,
+  resolveExistingWorktreeBranchAfterCheckoutFailure,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
@@ -264,6 +266,93 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-a",
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
+    });
+  });
+});
+
+describe("parseExistingWorktreePathFromCheckoutError", () => {
+  it("extracts the existing worktree path from checkout failure output", () => {
+    expect(
+      parseExistingWorktreePathFromCheckoutError(
+        "fatal: 'feature/demo' is already used by worktree at '/repo/demo-worktree'",
+      ),
+    ).toBe("/repo/demo-worktree");
+  });
+
+  it("returns null when the checkout failure is unrelated to a worktree reuse conflict", () => {
+    expect(
+      parseExistingWorktreePathFromCheckoutError("fatal: pathspec 'missing' did not match"),
+    ).toBeNull();
+  });
+});
+
+describe("resolveExistingWorktreeBranchAfterCheckoutFailure", () => {
+  it("reuses an existing local worktree branch after a checkout conflict", () => {
+    expect(
+      resolveExistingWorktreeBranchAfterCheckoutFailure({
+        activeProjectCwd: "/repo",
+        branch: {
+          isRemote: false,
+          name: "feature/demo",
+        },
+        branches: [
+          {
+            name: "feature/demo",
+            current: false,
+            isDefault: false,
+            worktreePath: "/repo/.t3/worktrees/feature-demo",
+          },
+        ],
+      }),
+    ).toEqual({
+      branchName: "feature/demo",
+      worktreePath: "/repo/.t3/worktrees/feature-demo",
+    });
+  });
+
+  it("maps remote branch refs back to an existing local worktree branch", () => {
+    expect(
+      resolveExistingWorktreeBranchAfterCheckoutFailure({
+        activeProjectCwd: "/repo",
+        branch: {
+          isRemote: true,
+          name: "origin/feature/demo",
+        },
+        branches: [
+          {
+            name: "feature/demo",
+            current: false,
+            isDefault: false,
+            worktreePath: "/repo/.t3/worktrees/feature-demo",
+          },
+        ],
+      }),
+    ).toEqual({
+      branchName: "feature/demo",
+      worktreePath: "/repo/.t3/worktrees/feature-demo",
+    });
+  });
+
+  it("normalizes the main project worktree path back to local mode", () => {
+    expect(
+      resolveExistingWorktreeBranchAfterCheckoutFailure({
+        activeProjectCwd: "/repo",
+        branch: {
+          isRemote: false,
+          name: "main",
+        },
+        branches: [
+          {
+            name: "main",
+            current: false,
+            isDefault: true,
+            worktreePath: "/repo",
+          },
+        ],
+      }),
+    ).toEqual({
+      branchName: "main",
+      worktreePath: null,
     });
   });
 });
