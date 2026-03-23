@@ -1,6 +1,7 @@
 import {
   CommandId,
   EventId,
+  LOCAL_EXECUTION_TARGET_ID,
   MessageId,
   type ProjectId,
   ThreadId,
@@ -17,14 +18,14 @@ import {
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
-import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
+import type { CheckpointStoreShape } from "../../checkpointing/Services/CheckpointStore.ts";
+import { CheckpointStoreResolver } from "../../checkpointing/Services/CheckpointStoreResolver.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
-import { isGitRepository } from "../../git/isRepo.ts";
 
 type ReactorInput =
   | {
@@ -66,7 +67,7 @@ const serverCommandId = (tag: string): CommandId =>
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-  const checkpointStore = yield* CheckpointStore;
+  const checkpointStoreResolver = yield* CheckpointStoreResolver;
   const receiptBus = yield* RuntimeReceiptBus;
 
   const appendRevertFailureActivity = (input: {
@@ -120,7 +121,13 @@ const make = Effect.gen(function* () {
 
   const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
-  ): Effect.fn.Return<Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>> {
+  ): Effect.fn.Return<
+    Option.Option<{
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly targetId: string;
+    }>
+  > {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
 
@@ -128,11 +135,19 @@ const make = Effect.gen(function* () {
 
     const findSessionWithCwd = (
       session: (typeof sessions)[number] | undefined,
-    ): Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }> => {
+    ): Option.Option<{
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly targetId: string;
+    }> => {
       if (!session?.cwd) {
         return Option.none();
       }
-      return Option.some({ threadId: session.threadId, cwd: session.cwd });
+      return Option.some({
+        threadId: session.threadId,
+        cwd: session.cwd,
+        targetId: session.targetId ?? LOCAL_EXECUTION_TARGET_ID,
+      });
     };
 
     if (thread) {
@@ -146,23 +161,32 @@ const make = Effect.gen(function* () {
     return Option.none();
   });
 
-  const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
-
   // Resolves the workspace CWD for checkpoint operations, preferring the
   // active provider session CWD and falling back to the thread/project config.
   // Returns undefined when no CWD can be determined or the workspace is not
   // a git repository.
-  const resolveCheckpointCwd = Effect.fnUntraced(function* (input: {
+  const resolveCheckpointWorkspace = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
-    readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+    readonly thread: {
+      readonly projectId: ProjectId;
+      readonly targetId?: string | undefined;
+      readonly worktreePath: string | null;
+      readonly session: { readonly targetId?: string | undefined } | null;
+    };
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
-  }): Effect.fn.Return<string | undefined> {
+  }) {
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
     const fromThread = resolveThreadWorkspaceCwd({
       thread: input.thread,
       projects: input.projects,
     });
+    const checkpointStore = yield* checkpointStoreResolver.resolveForTarget(
+      Option.match(fromSession, {
+        onNone: () => input.thread.session?.targetId ?? input.thread.targetId,
+        onSome: (runtime) => runtime.targetId,
+      }),
+    );
 
     const cwd = input.preferSessionRuntime
       ? (Option.match(fromSession, {
@@ -178,10 +202,10 @@ const make = Effect.gen(function* () {
     if (!cwd) {
       return undefined;
     }
-    if (!isGitWorkspace(cwd)) {
+    if (!(yield* checkpointStore.isGitRepository(cwd))) {
       return undefined;
     }
-    return cwd;
+    return { cwd, checkpointStore };
   });
 
   // Shared tail for both capture paths: creates the git checkpoint ref, diffs
@@ -190,6 +214,7 @@ const make = Effect.gen(function* () {
   const captureAndDispatchCheckpoint = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
+    readonly checkpointStore: CheckpointStoreShape;
     readonly thread: {
       readonly messages: ReadonlyArray<{
         readonly id: MessageId;
@@ -207,7 +232,7 @@ const make = Effect.gen(function* () {
     const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
 
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
+    const fromCheckpointExists = yield* input.checkpointStore.hasCheckpointRef({
       cwd: input.cwd,
       checkpointRef: fromCheckpointRef,
     });
@@ -219,7 +244,7 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* checkpointStore.captureCheckpoint({
+    yield* input.checkpointStore.captureCheckpoint({
       cwd: input.cwd,
       checkpointRef: targetCheckpointRef,
     });
@@ -228,7 +253,7 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     clearWorkspaceIndexCache(input.cwd);
 
-    const files = yield* checkpointStore
+    const files = yield* input.checkpointStore
       .diffCheckpoints({
         cwd: input.cwd,
         fromCheckpointRef,
@@ -350,13 +375,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwd = yield* resolveCheckpointCwd({
+    const checkpointWorkspace = yield* resolveCheckpointWorkspace({
       threadId: thread.id,
       thread,
       projects: readModel.projects,
       preferSessionRuntime: true,
     });
-    if (!checkpointCwd) {
+    if (!checkpointWorkspace) {
       return;
     }
 
@@ -376,8 +401,9 @@ const make = Effect.gen(function* () {
     yield* captureAndDispatchCheckpoint({
       threadId: thread.id,
       turnId,
+      checkpointStore: checkpointWorkspace.checkpointStore,
       thread,
-      cwd: checkpointCwd,
+      cwd: checkpointWorkspace.cwd,
       turnCount: nextTurnCount,
       status: checkpointStatusFromRuntime(event.payload.state),
       assistantMessageId: undefined,
@@ -425,21 +451,22 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwd = yield* resolveCheckpointCwd({
+    const checkpointWorkspace = yield* resolveCheckpointWorkspace({
       threadId,
       thread,
       projects: readModel.projects,
       preferSessionRuntime: true,
     });
-    if (!checkpointCwd) {
+    if (!checkpointWorkspace) {
       return;
     }
 
     yield* captureAndDispatchCheckpoint({
       threadId,
       turnId,
+      checkpointStore: checkpointWorkspace.checkpointStore,
       thread,
-      cwd: checkpointCwd,
+      cwd: checkpointWorkspace.cwd,
       turnCount: checkpointTurnCount,
       status: "ready",
       assistantMessageId: event.payload.assistantMessageId ?? undefined,
@@ -461,13 +488,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwd = yield* resolveCheckpointCwd({
+    const checkpointWorkspace = yield* resolveCheckpointWorkspace({
       threadId: thread.id,
       thread,
       projects: readModel.projects,
       preferSessionRuntime: false,
     });
-    if (!checkpointCwd) {
+    if (!checkpointWorkspace) {
       return;
     }
 
@@ -476,16 +503,16 @@ const make = Effect.gen(function* () {
       0,
     );
     const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
-    const baselineExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: checkpointCwd,
+    const baselineExists = yield* checkpointWorkspace.checkpointStore.hasCheckpointRef({
+      cwd: checkpointWorkspace.cwd,
       checkpointRef: baselineCheckpointRef,
     });
     if (baselineExists) {
       return;
     }
 
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
+    yield* checkpointWorkspace.checkpointStore.captureCheckpoint({
+      cwd: checkpointWorkspace.cwd,
       checkpointRef: baselineCheckpointRef,
     });
     yield* receiptBus.publish({
@@ -520,13 +547,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwd = yield* resolveCheckpointCwd({
+    const checkpointWorkspace = yield* resolveCheckpointWorkspace({
       threadId,
       thread,
       projects: readModel.projects,
       preferSessionRuntime: false,
     });
-    if (!checkpointCwd) {
+    if (!checkpointWorkspace) {
       return;
     }
 
@@ -535,16 +562,16 @@ const make = Effect.gen(function* () {
       0,
     );
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
-    const baselineExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: checkpointCwd,
+    const baselineExists = yield* checkpointWorkspace.checkpointStore.hasCheckpointRef({
+      cwd: checkpointWorkspace.cwd,
       checkpointRef: baselineCheckpointRef,
     });
     if (baselineExists) {
       return;
     }
 
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
+    yield* checkpointWorkspace.checkpointStore.captureCheckpoint({
+      cwd: checkpointWorkspace.cwd,
       checkpointRef: baselineCheckpointRef,
     });
     yield* receiptBus.publish({
@@ -583,7 +610,10 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
+    const checkpointStore = yield* checkpointStoreResolver.resolveForTarget(
+      sessionRuntime.value.targetId,
+    );
+    if (!(yield* checkpointStore.isGitRepository(sessionRuntime.value.cwd))) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,

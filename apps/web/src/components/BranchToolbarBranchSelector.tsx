@@ -26,6 +26,8 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
+  parseExistingWorktreePathFromCheckoutError,
+  resolveExistingWorktreeBranchAfterCheckoutFailure,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
@@ -199,10 +201,44 @@ export function BranchToolbarBranchSelector({
         });
         await invalidateGitQueries(queryClient);
       } catch (error) {
+        const errorMessage = toBranchActionErrorMessage(error);
+        const refreshedBranches = await api.git
+          .listBranches({
+            cwd: activeProjectCwd,
+            targetId,
+          })
+          .catch(() => null);
+        const existingWorktreeSelection = refreshedBranches
+          ? resolveExistingWorktreeBranchAfterCheckoutFailure({
+              activeProjectCwd,
+              branches: refreshedBranches.branches,
+              branch,
+            })
+          : null;
+
+        if (existingWorktreeSelection) {
+          setOptimisticBranch(existingWorktreeSelection.branchName);
+          onSetThreadBranch(
+            existingWorktreeSelection.branchName,
+            existingWorktreeSelection.worktreePath,
+          );
+          return;
+        }
+
+        const existingWorktreePath = parseExistingWorktreePathFromCheckoutError(errorMessage);
+        if (existingWorktreePath) {
+          setOptimisticBranch(selectedBranchName);
+          onSetThreadBranch(
+            selectedBranchName,
+            existingWorktreePath === activeProjectCwd ? null : existingWorktreePath,
+          );
+          return;
+        }
+
         toastManager.add({
           type: "error",
           title: "Failed to checkout branch.",
-          description: toBranchActionErrorMessage(error),
+          description: errorMessage,
         });
         return;
       }

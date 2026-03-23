@@ -111,6 +111,7 @@ beforeEach(() => {
   latestPushByChannel.clear();
   nextPushSequence = 1;
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
+  delete document.documentElement.dataset.uiScale;
 });
 
 afterEach(() => {
@@ -411,6 +412,32 @@ describe("wsNativeApi", () => {
       y: 30,
     });
 
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
+      [{ id: "delete", label: "Delete", destructive: true }],
+      { x: 20, y: 30 },
+    );
+  });
+
+  it("uses fallback context menu when UI scale is not medium", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    showContextMenuFallbackMock.mockResolvedValue("delete");
+    Object.defineProperty(getWindowForTest(), "desktopBridge", {
+      configurable: true,
+      writable: true,
+      value: {
+        showContextMenu,
+      },
+    });
+    document.documentElement.dataset.uiScale = "large";
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    await api.contextMenu.show([{ id: "delete", label: "Delete", destructive: true }], {
+      x: 20,
+      y: 30,
+    });
+
+    expect(showContextMenu).not.toHaveBeenCalled();
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
       [{ id: "delete", label: "Delete", destructive: true }],
       { x: 20, y: 30 },

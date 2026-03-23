@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  LOCAL_EXECUTION_TARGET_ID,
   type KeybindingCommand,
   type CodexReasoningEffort,
   type MessageId,
@@ -67,6 +66,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { resolveThreadTargetId } from "../threadTarget";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -387,8 +387,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
-  const activeTargetId =
-    activeThread?.targetId ?? activeProject?.targetId ?? LOCAL_EXECUTION_TARGET_ID;
+  const activeTargetId = resolveThreadTargetId({
+    thread: activeThread,
+    projectTargetId: activeProject?.targetId ?? null,
+  });
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1226,6 +1228,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
         ? {
             threadId: activeThreadId,
+            targetId: activeTargetId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1234,6 +1237,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
         : {
             threadId: activeThreadId,
+            targetId: activeTargetId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1279,7 +1283,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
       keybinding?: string | null;
-      keybindingCommand: KeybindingCommand;
+      keybindingCommand?: KeybindingCommand;
     }) => {
       const api = readNativeApi();
       if (!api) return;
@@ -1291,10 +1295,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
+      const keybindingRule =
+        input.keybindingCommand !== undefined
+          ? decodeProjectScriptKeybindingRule({
+              keybinding: input.keybinding,
+              command: input.keybindingCommand,
+            })
+          : null;
 
       if (isElectron && keybindingRule) {
         await api.server.upsertKeybinding(keybindingRule);
@@ -1397,6 +1404,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
           title: "Could not delete action",
           description: error instanceof Error ? error.message : "An unexpected error occurred.",
         });
+      }
+    },
+    [activeProject, persistProjectScripts],
+  );
+  const reorderProjectScripts = useCallback(
+    async (nextScripts: ProjectScript[]) => {
+      if (!activeProject) return;
+
+      try {
+        await persistProjectScripts({
+          projectId: activeProject.id,
+          projectCwd: activeProject.cwd,
+          previousScripts: activeProject.scripts,
+          nextScripts,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not reorder actions",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+        throw error;
       }
     },
     [activeProject, persistProjectScripts],
@@ -2371,6 +2400,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           commandId: newCommandId(),
           threadId: threadIdForSend,
           projectId: activeProject.id,
+          targetId: activeTargetId,
           title,
           model: threadCreateModel,
           runtimeMode,
@@ -2825,6 +2855,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         commandId: newCommandId(),
         threadId: nextThreadId,
         projectId: activeProject.id,
+        targetId: activeTargetId,
         title: nextThreadTitle,
         model: nextThreadModel,
         runtimeMode,
@@ -2891,6 +2922,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
+    activeTargetId,
     activeThread,
     beginSendPhase,
     isConnecting,
@@ -3284,6 +3316,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onReorderProjectScripts={reorderProjectScripts}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />

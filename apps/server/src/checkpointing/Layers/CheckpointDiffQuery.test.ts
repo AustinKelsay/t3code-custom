@@ -1,6 +1,7 @@
 import {
   CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  LOCAL_EXECUTION_TARGET_ID,
   ProjectId,
   ThreadId,
   TurnId,
@@ -12,8 +13,12 @@ import { describe, expect, it } from "vitest";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointDiffQueryLive } from "./CheckpointDiffQuery.ts";
-import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointDiffQuery } from "../Services/CheckpointDiffQuery.ts";
+import {
+  CheckpointStoreResolver,
+  type CheckpointStoreResolverShape,
+} from "../Services/CheckpointStoreResolver.ts";
+import type { CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 
 function makeSnapshot(input: {
   readonly projectId: ProjectId;
@@ -22,6 +27,7 @@ function makeSnapshot(input: {
   readonly worktreePath: string | null;
   readonly checkpointTurnCount: number;
   readonly checkpointRef: CheckpointRef;
+  readonly targetId?: string;
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -42,6 +48,7 @@ function makeSnapshot(input: {
       {
         id: input.threadId,
         projectId: input.projectId,
+        targetId: input.targetId ?? LOCAL_EXECUTION_TARGET_ID,
         title: "Thread",
         model: "gpt-5-codex",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -116,9 +123,12 @@ describe("CheckpointDiffQueryLive", () => {
         }),
       deleteCheckpointRefs: () => Effect.void,
     };
+    const checkpointStoreResolver: CheckpointStoreResolverShape = {
+      resolveForTarget: () => Effect.succeed(checkpointStore),
+    };
 
     const layer = CheckpointDiffQueryLive.pipe(
-      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(Layer.succeed(CheckpointStoreResolver, checkpointStoreResolver)),
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () => Effect.succeed(snapshot),
@@ -165,9 +175,12 @@ describe("CheckpointDiffQueryLive", () => {
       diffCheckpoints: () => Effect.succeed(""),
       deleteCheckpointRefs: () => Effect.void,
     };
+    const checkpointStoreResolver: CheckpointStoreResolverShape = {
+      resolveForTarget: () => Effect.succeed(checkpointStore),
+    };
 
     const layer = CheckpointDiffQueryLive.pipe(
-      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(Layer.succeed(CheckpointStoreResolver, checkpointStoreResolver)),
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () =>
@@ -193,5 +206,62 @@ describe("CheckpointDiffQueryLive", () => {
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow("Thread 'thread-missing' not found.");
+  });
+
+  it("uses the thread target when resolving checkpoint storage for remote threads", async () => {
+    const projectId = ProjectId.makeUnsafe("project-remote");
+    const threadId = ThreadId.makeUnsafe("thread-remote");
+    const remoteTargetId = "mac-d0782bfd";
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const resolvedTargetIds: Array<string | null | undefined> = [];
+
+    const snapshot = makeSnapshot({
+      projectId,
+      threadId,
+      workspaceRoot: "/Users/nick/code/example",
+      worktreePath: null,
+      checkpointTurnCount: 1,
+      checkpointRef: toCheckpointRef,
+      targetId: remoteTargetId,
+    });
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () => Effect.succeed(true),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: () => Effect.succeed("remote diff"),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+    const checkpointStoreResolver: CheckpointStoreResolverShape = {
+      resolveForTarget: (targetId) =>
+        Effect.sync(() => {
+          resolvedTargetIds.push(targetId);
+          return checkpointStore;
+        }),
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStoreResolver, checkpointStoreResolver)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () => Effect.succeed(snapshot),
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(resolvedTargetIds).toEqual([remoteTargetId]);
+    expect(result.diff).toBe("remote diff");
   });
 });

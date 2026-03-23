@@ -8,16 +8,19 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  LOCAL_EXECUTION_TARGET_ID,
   MessageId,
   ProjectId,
   ThreadId,
   TurnId,
+  type ExecutionTarget,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
+import { CheckpointStoreResolverLive } from "../../checkpointing/Layers/CheckpointStoreResolver.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -37,6 +40,10 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
+import {
+  ExecutionTargetService,
+  type ExecutionTargetServiceShape,
+} from "../../executionTarget/Services/ExecutionTargetService.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
@@ -103,6 +110,34 @@ function createProviderServiceHarness(
     service,
     rollbackConversation,
     emit,
+  };
+}
+
+function createExecutionTargetServiceHarness(): ExecutionTargetServiceShape {
+  const localTarget: ExecutionTarget = {
+    id: LOCAL_EXECUTION_TARGET_ID,
+    kind: "local",
+    label: "Local",
+    connection: { kind: "local" },
+    health: { status: "healthy" },
+    capabilities: {
+      provider: true,
+      terminal: true,
+      git: true,
+      files: true,
+      search: true,
+      attachments: true,
+      portForward: true,
+    },
+  };
+
+  return {
+    list: () => Effect.succeed([localTarget]),
+    upsert: () => Effect.succeed(localTarget),
+    remove: () => Effect.void,
+    checkHealth: () => Effect.succeed(localTarget),
+    getById: () => Effect.succeed(localTarget),
+    getByIdForRuntime: () => Effect.succeed(localTarget),
   };
 }
 
@@ -250,12 +285,18 @@ describe("CheckpointReactor", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const executionTargetService = createExecutionTargetServiceHarness();
+    const checkpointStoreResolverLayer = CheckpointStoreResolverLive.pipe(
+      Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(Layer.succeed(ExecutionTargetService, executionTargetService)),
+    );
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(checkpointStoreResolverLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );

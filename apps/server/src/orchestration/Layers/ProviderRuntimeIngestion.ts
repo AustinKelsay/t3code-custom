@@ -18,11 +18,17 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
+import { GitCore } from "../../git/Services/GitCore.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
+import {
+  readCompletedCommandExecutionContext,
+  resolveThreadWorkspaceMetadataUpdate,
+  shouldAttemptWorkspaceReconciliation,
+} from "../providerRuntimeWorkspaceSync.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -481,6 +487,7 @@ function runtimeEventToActivities(
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const gitCore = yield* GitCore;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -518,6 +525,73 @@ const make = Effect.gen(function* () {
       return false;
     }
     return isGitRepository(workspaceCwd);
+  });
+
+  const reconcileThreadWorkspaceFromCompletedCommand = Effect.fnUntraced(function* (
+    event: ProviderRuntimeEvent,
+  ) {
+    const commandContext = readCompletedCommandExecutionContext(event);
+    if (!commandContext?.cwd) {
+      return;
+    }
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
+    if (!thread) {
+      return;
+    }
+    const project = readModel.projects.find((entry) => entry.id === thread.projectId);
+    if (!project) {
+      return;
+    }
+
+    if (
+      !shouldAttemptWorkspaceReconciliation({
+        command: commandContext.command,
+        commandCwd: commandContext.cwd,
+        threadWorktreePath: thread.worktreePath,
+        projectWorkspaceRoot: project.workspaceRoot,
+      })
+    ) {
+      return;
+    }
+
+    const targetId = thread.session?.targetId ?? thread.targetId ?? LOCAL_EXECUTION_TARGET_ID;
+    const gitSnapshot = yield* Effect.all(
+      [
+        gitCore.status({
+          cwd: commandContext.cwd,
+          targetId,
+        }),
+        gitCore.listBranches({
+          cwd: project.workspaceRoot,
+          targetId,
+        }),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.option);
+    if (Option.isNone(gitSnapshot)) {
+      return;
+    }
+
+    const nextMetadata = resolveThreadWorkspaceMetadataUpdate({
+      commandCwd: commandContext.cwd,
+      thread,
+      project,
+      statusBranch: gitSnapshot.value[0].branch,
+      branches: gitSnapshot.value[1].branches,
+    });
+    if (!nextMetadata) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: providerCommandId(event, "thread-workspace-sync"),
+      threadId: thread.id,
+      branch: nextMetadata.branch,
+      worktreePath: nextMetadata.worktreePath,
+    });
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
@@ -778,6 +852,16 @@ const make = Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === event.threadId);
       if (!thread) return;
+
+      yield* reconcileThreadWorkspaceFromCompletedCommand(event).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider runtime ingestion failed to reconcile thread workspace", {
+            threadId: event.threadId,
+            eventId: event.eventId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);

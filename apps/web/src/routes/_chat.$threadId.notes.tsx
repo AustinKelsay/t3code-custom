@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import ThreadNotesPage from "../components/ThreadNotesPage";
 import { ThreadPageHeader } from "../components/chat/ThreadPageHeader";
 import { APP_VIEWPORT_CSS_HEIGHT } from "../lib/viewport";
+import { resolveThreadTargetId } from "../threadTarget";
 import { useThreadRouteData } from "../threadRouteData";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -15,7 +16,10 @@ function ThreadNotesRouteView() {
   const { activeProject, activeThread, routeThreadExists, threadsHydrated } =
     useThreadRouteData(threadId);
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
-  const targetId = activeThread?.targetId ?? null;
+  const targetId = resolveThreadTargetId({
+    thread: activeThread,
+    projectTargetId: activeProject?.targetId ?? null,
+  });
 
   useEffect(() => {
     if (!threadsHydrated) {

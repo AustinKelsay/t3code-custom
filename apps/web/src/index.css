@@ -126,6 +126,12 @@ html {
   font-size: var(--app-root-font-size);
 }
 
+@media (max-width: 640px) {
+  html {
+    font-size: min(var(--app-root-font-size), 17px);
+  }
+}
+
 html[data-ui-scale="small"] {
   --app-root-font-size: 14px;
 }
@@ -554,7 +560,7 @@ label:has(> select#reasoning-effort) select {
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
   overscroll-behavior: contain;
-  touch-action: pan-y;
+  touch-action: auto;
 }
 
 .diff-render-file {
@@ -577,13 +583,18 @@ label:has(> select#reasoning-effort) select {
   touch-action: pan-x pan-y;
 }
 
+.diff-render-surface[data-diff-render-mode="split"] {
+  overflow-x: hidden;
+}
+
 .diff-render-canvas {
   min-width: 100%;
   width: max-content;
 }
 
 .diff-render-canvas[data-diff-render-mode="split"] {
-  min-width: 72rem;
+  min-width: 100%;
+  width: 100%;
 }
 
 .diff-render-canvas[data-diff-render-mode="stacked"] {

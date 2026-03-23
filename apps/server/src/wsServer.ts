@@ -75,11 +75,11 @@ import { ServerConfig } from "./config";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { makeGitCore } from "./git/Layers/GitCore.ts";
 import { makeGitManager } from "./git/Layers/GitManager.ts";
-import { GitService, type GitServiceShape } from "./git/Services/GitService.ts";
-import { GitCommandError } from "./git/Errors.ts";
+import { GitService } from "./git/Services/GitService.ts";
 import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { makeGitHubCliShape, normalizeGitHubCliError } from "./git/makeGitHubCli.ts";
+import { makeTargetGitService } from "./git/makeTargetGitService.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -414,45 +414,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       target,
       cwd: resolvedPath,
     };
-  });
-
-  const makeTargetGitService = (target: ExecutionTarget): GitServiceShape => ({
-    execute: (input) =>
-      Effect.tryPromise({
-        try: async () => {
-          const normalizedEnv =
-            input.env === undefined
-              ? undefined
-              : Object.fromEntries(
-                  Object.entries(input.env).filter(
-                    (entry): entry is [string, string] => typeof entry[1] === "string",
-                  ),
-                );
-          const result = await runTargetProcess({
-            target,
-            command: "git",
-            args: input.args,
-            cwd: input.cwd,
-            ...(normalizedEnv ? { env: normalizedEnv } : {}),
-            ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-            allowNonZeroExit: true,
-            ...(input.maxOutputBytes !== undefined ? { maxBufferBytes: input.maxOutputBytes } : {}),
-          });
-          return {
-            code: result.code ?? 1,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        },
-        catch: (cause) =>
-          new GitCommandError({
-            operation: input.operation,
-            command: `git ${input.args.join(" ")}`,
-            cwd: input.cwd,
-            detail: cause instanceof Error ? cause.message : "Remote git command execution failed.",
-            cause,
-          }),
-      }),
   });
 
   const makeTargetGitHubCli = (target: ExecutionTarget): GitHubCliShape => {

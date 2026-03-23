@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -103,6 +104,34 @@ async function waitForThread(
   return poll();
 }
 
+function createGitCoreHarness(overrides?: Partial<GitCoreShape>): GitCoreShape {
+  const unsupported = () => Effect.die(new Error("Unsupported git call in test")) as never;
+  return {
+    status: unsupported,
+    statusDetails: unsupported,
+    readWorkingTreeDiff: unsupported,
+    prepareCommitContext: unsupported,
+    commit: unsupported,
+    pushCurrentBranch: unsupported,
+    readRangeContext: unsupported,
+    readConfigValue: unsupported,
+    listBranches: unsupported,
+    pullCurrentBranch: unsupported,
+    createWorktree: unsupported,
+    fetchPullRequestBranch: unsupported,
+    ensureRemote: unsupported,
+    fetchRemoteBranch: unsupported,
+    setBranchUpstream: unsupported,
+    removeWorktree: unsupported,
+    renameBranch: unsupported,
+    createBranch: unsupported,
+    checkoutBranch: unsupported,
+    initRepo: unsupported,
+    listLocalBranchNames: unsupported,
+    ...overrides,
+  };
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
@@ -138,9 +167,9 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness() {
-    const workspaceRoot = makeTempDir("t3-provider-project-");
-    fs.mkdirSync(path.join(workspaceRoot, ".git"));
+  async function createHarness(options?: { gitCore?: GitCoreShape; workspaceRoot?: string }) {
+    const workspaceRoot = options?.workspaceRoot ?? makeTempDir("t3-provider-project-");
+    fs.mkdirSync(path.join(workspaceRoot, ".git"), { recursive: true });
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -150,6 +179,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(Layer.succeed(GitCore, options?.gitCore ?? createGitCoreHarness())),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
@@ -210,6 +240,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       drain,
+      workspaceRoot,
     };
   }
 
@@ -253,6 +284,88 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("syncs thread workspace metadata from completed command cwd changes", async () => {
+    const workspaceRoot = makeTempDir("t3-provider-project-sync-");
+    const harness = await createHarness({
+      workspaceRoot,
+      gitCore: createGitCoreHarness({
+        status: () =>
+          Effect.succeed({
+            branch: "lni-spark-passkey",
+            hasWorkingTreeChanges: true,
+            workingTree: {
+              files: [],
+              insertions: 0,
+              deletions: 0,
+            },
+            hasUpstream: false,
+            aheadCount: 0,
+            behindCount: 0,
+            pr: null,
+          }),
+        listBranches: () =>
+          Effect.succeed({
+            isRepo: true,
+            originWebUrl: null,
+            hasOriginRemote: false,
+            branches: [
+              {
+                name: "master",
+                current: false,
+                isDefault: true,
+                isRemote: false,
+                worktreePath: workspaceRoot,
+              },
+              {
+                name: "lni-spark-passkey",
+                current: true,
+                isDefault: false,
+                isRemote: false,
+                worktreePath: `${workspaceRoot}-spark-passkey`,
+              },
+            ],
+          }),
+      }),
+    });
+    const createdAt = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-seed-worktree"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "codex/mpp-traits-scaffold",
+        worktreePath: `${workspaceRoot}-mpp-traits`,
+      }),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-worktree-sync"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt,
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        data: {
+          item: {
+            command: "sed -n '1,40p' bindings/typescript/examples/spark-web/index.html",
+            cwd: `${workspaceRoot}-spark-passkey`,
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (candidate) =>
+        candidate.branch === "lni-spark-passkey" &&
+        candidate.worktreePath === `${workspaceRoot}-spark-passkey`,
+    );
+    expect(thread.branch).toBe("lni-spark-passkey");
+    expect(thread.worktreePath).toBe(`${workspaceRoot}-spark-passkey`);
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

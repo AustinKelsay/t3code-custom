@@ -6,6 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
+import { CheckpointStoreResolverLive } from "./checkpointing/Layers/CheckpointStoreResolver";
 import { ServerConfig } from "./config";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
@@ -84,6 +85,9 @@ export function makeServerProviderLayer(): Layer.Layer<
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
   const textGenerationLayer = CodexTextGenerationLive;
+  const executionTargetServiceLayer = ExecutionTargetServiceLive.pipe(
+    Layer.provide(ExecutionTargetRepositoryLive),
+  );
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
@@ -91,15 +95,21 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   );
 
+  const checkpointStoreResolverLayer = CheckpointStoreResolverLive.pipe(
+    Layer.provideMerge(CheckpointStoreLive),
+    Layer.provideMerge(executionTargetServiceLayer),
+  );
+
   const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provideMerge(CheckpointStoreLive),
+    Layer.provideMerge(checkpointStoreResolverLayer),
   );
 
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
     CheckpointStoreLive,
+    checkpointStoreResolverLayer,
     checkpointDiffQueryLayer,
     RuntimeReceiptBusLive,
   );
@@ -120,9 +130,6 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  const executionTargetServiceLayer = ExecutionTargetServiceLive.pipe(
-    Layer.provide(ExecutionTargetRepositoryLive),
-  );
   const terminalLayer = TerminalManagerLive.pipe(
     Layer.provide(executionTargetServiceLayer),
     Layer.provide(

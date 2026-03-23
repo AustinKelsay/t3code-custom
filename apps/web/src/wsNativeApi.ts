@@ -10,11 +10,16 @@ import {
 } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { readUiScaleFromDocument } from "./lib/uiScale";
 import { WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
+
+function shouldUseNativeContextMenu(): boolean {
+  return !!window.desktopBridge && readUiScaleFromDocument() === "medium";
+}
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
@@ -164,8 +169,9 @@ export function createWsNativeApi(): NativeApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        const desktopBridge = window.desktopBridge;
+        if (desktopBridge && shouldUseNativeContextMenu()) {
+          return desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },

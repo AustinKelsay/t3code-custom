@@ -62,9 +62,18 @@ export function useHandleNewThread() {
         : null;
       if (storedDraftThread) {
         return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasTargetIdOption) {
+          const shouldSyncStoredDraftTarget = storedDraftThread.targetId !== projectTargetId;
+          if (
+            hasBranchOption ||
+            hasWorktreePathOption ||
+            hasEnvModeOption ||
+            hasTargetIdOption ||
+            shouldSyncStoredDraftTarget
+          ) {
             setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasTargetIdOption ? { targetId: projectTargetId } : {}),
+              ...(hasTargetIdOption || shouldSyncStoredDraftTarget
+                ? { targetId: projectTargetId }
+                : {}),
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
@@ -88,9 +97,18 @@ export function useHandleNewThread() {
         routeThreadId &&
         latestActiveDraftThread.projectId === projectId
       ) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasTargetIdOption) {
+        const shouldSyncActiveDraftTarget = latestActiveDraftThread.targetId !== projectTargetId;
+        if (
+          hasBranchOption ||
+          hasWorktreePathOption ||
+          hasEnvModeOption ||
+          hasTargetIdOption ||
+          shouldSyncActiveDraftTarget
+        ) {
           setDraftThreadContext(routeThreadId, {
-            ...(hasTargetIdOption ? { targetId: projectTargetId } : {}),
+            ...(hasTargetIdOption || shouldSyncActiveDraftTarget
+              ? { targetId: projectTargetId }
+              : {}),
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),

@@ -23,6 +23,7 @@ import {
 } from "effect";
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
+import { CheckpointStoreResolverLive } from "../src/checkpointing/Layers/CheckpointStoreResolver.ts";
 import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
 import { GitCore, type GitCoreShape } from "../src/git/Services/GitCore.ts";
 import { TextGeneration, type TextGenerationShape } from "../src/git/Services/TextGeneration.ts";
@@ -286,6 +287,10 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(fakeRegistry!),
           Layer.provide(AnalyticsService.layerTest),
         );
+    const checkpointStoreResolverLayer = CheckpointStoreResolverLive.pipe(
+      Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(executionTargetServiceLayer),
+    );
 
     const runtimeServicesLayer = Layer.mergeAll(
       orchestrationLayer,
@@ -293,6 +298,7 @@ export const makeOrchestrationIntegrationHarness = (
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
       CheckpointStoreLive,
+      checkpointStoreResolverLayer,
       providerLayer,
       providerSessionDirectoryLayer,
       RuntimeReceiptBusLive,

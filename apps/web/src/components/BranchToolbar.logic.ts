@@ -121,3 +121,36 @@ export function resolveBranchSelectionTarget(input: {
     reuseExistingWorktree: false,
   };
 }
+
+export function parseExistingWorktreePathFromCheckoutError(errorMessage: string): string | null {
+  const match = errorMessage.match(/already used by worktree at ['"]([^'"]+)['"]/i);
+  return match?.[1]?.trim() || null;
+}
+
+export function resolveExistingWorktreeBranchAfterCheckoutFailure(input: {
+  activeProjectCwd: string;
+  branches: ReadonlyArray<GitBranch>;
+  branch: Pick<GitBranch, "isRemote" | "name">;
+}): { branchName: string; worktreePath: string | null } | null {
+  const candidateNames = new Set<string>([input.branch.name]);
+  if (input.branch.isRemote) {
+    candidateNames.add(deriveLocalBranchNameFromRemoteRef(input.branch.name));
+  }
+
+  for (const candidateName of candidateNames) {
+    const localBranch = input.branches.find(
+      (branch) => !branch.isRemote && branch.name === candidateName && branch.worktreePath,
+    );
+    if (!localBranch) {
+      continue;
+    }
+
+    return {
+      branchName: localBranch.name,
+      worktreePath:
+        localBranch.worktreePath === input.activeProjectCwd ? null : localBranch.worktreePath,
+    };
+  }
+
+  return null;
+}

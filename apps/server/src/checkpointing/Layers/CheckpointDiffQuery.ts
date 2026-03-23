@@ -9,17 +9,17 @@ import { Effect, Layer, Schema } from "effect";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
 import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
-import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
 } from "../Services/CheckpointDiffQuery.ts";
+import { CheckpointStoreResolver } from "../Services/CheckpointStoreResolver.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const checkpointStore = yield* CheckpointStore;
+  const checkpointStoreResolver = yield* CheckpointStoreResolver;
 
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = (input) =>
     Effect.gen(function* () {
@@ -72,6 +72,9 @@ const make = Effect.gen(function* () {
           detail: `Workspace path missing for thread '${input.threadId}' when computing turn diff.`,
         });
       }
+      const checkpointStore = yield* checkpointStoreResolver.resolveForTarget(
+        thread.session?.targetId ?? thread.targetId,
+      );
 
       const fromCheckpointRef =
         input.fromTurnCount === 0

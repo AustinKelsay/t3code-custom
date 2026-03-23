@@ -1,5 +1,4 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-
 /**
  * Imperative DOM-based context menu for non-Electron environments.
  * Shows a positioned dropdown and returns a promise that resolves
@@ -15,7 +14,10 @@ export function showContextMenuFallback<T extends string>(
 
     const menu = document.createElement("div");
     menu.className =
-      "fixed z-[10000] min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-xl animate-in fade-in zoom-in-95";
+      "fixed z-[10000] min-w-[140px] rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-xl animate-in fade-in zoom-in-95";
+    menu.style.fontFamily = getComputedStyle(document.body).fontFamily;
+    menu.style.fontSize = "12px";
+    menu.style.lineHeight = "1.25";
 
     const x = position?.x ?? 0;
     const y = position?.y ?? 0;
@@ -45,8 +47,9 @@ export function showContextMenuFallback<T extends string>(
       btn.textContent = item.label;
       const isDestructiveAction = item.destructive === true || item.id === "delete";
       btn.className = isDestructiveAction
-        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
-        : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
+        ? "flex w-full cursor-default items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-accent"
+        : "flex w-full cursor-default items-center gap-2 px-3 py-1.5 text-left text-popover-foreground hover:bg-accent";
+      btn.style.font = "inherit";
       btn.addEventListener("click", () => cleanup(item.id));
       menu.appendChild(btn);
     }

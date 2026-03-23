@@ -1921,5 +1921,85 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(didFailRemoteNames).toBe(true);
       }),
     );
+
+    it.effect("preserves worktree paths reported by git even when they do not exist locally", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["checkout", "-b", "feature/remote-worktree"]);
+        const currentBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        const realGitService = yield* GitService;
+        const remoteWorktreePath = "/Users/nick/code/feature-remote-worktree";
+        const core = yield* makeIsolatedGitCore({
+          execute: (input) => {
+            if (input.args.join(" ") === "worktree list --porcelain") {
+              return Effect.succeed({
+                code: 0,
+                stdout: [
+                  `worktree ${tmp}`,
+                  "HEAD 1111111111111111111111111111111111111111",
+                  `branch refs/heads/${currentBranch}`,
+                  "",
+                  `worktree ${remoteWorktreePath}`,
+                  "HEAD 2222222222222222222222222222222222222222",
+                  "branch refs/heads/feature/remote-worktree",
+                  "",
+                ].join("\n"),
+                stderr: "",
+              });
+            }
+            return realGitService.execute(input);
+          },
+        });
+
+        const result = yield* core.listBranches({ cwd: tmp });
+
+        expect(
+          result.branches.find((branch) => branch.name === "feature/remote-worktree")?.worktreePath,
+        ).toBe(remoteWorktreePath);
+      }),
+    );
+
+    it.effect("ignores prunable worktree entries when deriving branch worktree paths", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["branch", "feature/stale"]);
+
+        const realGitService = yield* GitService;
+        const core = yield* makeIsolatedGitCore({
+          execute: (input) => {
+            if (input.args.join(" ") === "worktree list --porcelain") {
+              return Effect.succeed({
+                code: 0,
+                stdout: [
+                  `worktree ${tmp}`,
+                  "HEAD 1111111111111111111111111111111111111111",
+                  `branch refs/heads/${initialBranch}`,
+                  "",
+                  "worktree /Users/nick/code/stale-worktree",
+                  "HEAD 2222222222222222222222222222222222222222",
+                  "branch refs/heads/feature/stale",
+                  "prunable gitdir file points to non-existent location",
+                  "",
+                ].join("\n"),
+                stderr: "",
+              });
+            }
+            return realGitService.execute(input);
+          },
+        });
+
+        const result = yield* core.listBranches({ cwd: tmp });
+
+        expect(result.branches.find((branch) => branch.name === initialBranch)?.worktreePath).toBe(
+          tmp,
+        );
+        expect(
+          result.branches.find((branch) => branch.name === "feature/stale")?.worktreePath,
+        ).toBeNull();
+      }),
+    );
   });
 });

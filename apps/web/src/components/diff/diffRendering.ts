@@ -49,8 +49,11 @@ export const DIFF_PANEL_UNSAFE_CSS = `
   }
 
   [data-code] {
-    overflow: visible !important;
-    overscroll-behavior: auto !important;
+    overflow: auto clip !important;
+    overscroll-behavior-x: contain !important;
+    overscroll-behavior-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y !important;
   }
 }
 
@@ -137,4 +140,15 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
+}
+
+export function buildDiffSelectionRenderKey(input: {
+  patch: string | undefined;
+  scope: string;
+  theme: "light" | "dark";
+}): string {
+  if (!input.patch) {
+    return `${input.scope}:${input.theme}:empty`;
+  }
+  return `${input.scope}:${input.theme}:${buildPatchCacheKey(input.patch, "diff-selection")}`;
 }

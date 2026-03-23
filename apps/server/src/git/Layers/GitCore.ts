@@ -1,4 +1,4 @@
-import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Cache, Data, Duration, Effect, Exit, Layer, Path } from "effect";
 
 import { GitCommandError } from "../Errors.ts";
 import { parseGitHubWebUrlFromRemoteUrl } from "../githubRemote.ts";
@@ -199,6 +199,47 @@ function commandLabel(args: readonly string[]): string {
   return `git ${args.join(" ")}`;
 }
 
+function parseWorktreeBranchPaths(stdout: string): Map<string, string> {
+  const worktreeMap = new Map<string, string>();
+  let currentPath: string | null = null;
+  let currentBranch: string | null = null;
+  let isPrunable = false;
+
+  const flush = () => {
+    if (currentPath && currentBranch && !isPrunable) {
+      worktreeMap.set(currentBranch, currentPath);
+    }
+    currentPath = null;
+    currentBranch = null;
+    isPrunable = false;
+  };
+
+  for (const line of stdout.split(/\r?\n/g)) {
+    if (line.length === 0) {
+      flush();
+      continue;
+    }
+
+    if (line.startsWith("worktree ")) {
+      flush();
+      currentPath = line.slice("worktree ".length);
+      continue;
+    }
+
+    if (line.startsWith("branch refs/heads/")) {
+      currentBranch = line.slice("branch refs/heads/".length);
+      continue;
+    }
+
+    if (line.startsWith("prunable ")) {
+      isPrunable = true;
+    }
+  }
+
+  flush();
+  return worktreeMap;
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -227,7 +268,6 @@ function createGitCommandError(
 
 export const makeGitCore = Effect.gen(function* () {
   const git = yield* GitService;
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   const executeGit = (
@@ -1169,24 +1209,8 @@ export const makeGitCore = Effect.gen(function* () {
           ? defaultRef.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
           : null;
 
-      const worktreeMap = new Map<string, string>();
-      if (worktreeList.code === 0) {
-        let currentPath: string | null = null;
-        for (const line of worktreeList.stdout.split("\n")) {
-          if (line.startsWith("worktree ")) {
-            const candidatePath = line.slice("worktree ".length);
-            const exists = yield* fileSystem.stat(candidatePath).pipe(
-              Effect.map(() => true),
-              Effect.catch(() => Effect.succeed(false)),
-            );
-            currentPath = exists ? candidatePath : null;
-          } else if (line.startsWith("branch refs/heads/") && currentPath) {
-            worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
-          } else if (line === "") {
-            currentPath = null;
-          }
-        }
-      }
+      const worktreeMap =
+        worktreeList.code === 0 ? parseWorktreeBranchPaths(worktreeList.stdout) : new Map();
 
       const localBranches = localBranchResult.stdout
         .split("\n")
