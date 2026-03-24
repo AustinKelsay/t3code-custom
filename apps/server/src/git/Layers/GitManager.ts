@@ -8,6 +8,10 @@ import {
 } from "@t3tools/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
+import {
+  buildGitHubSshRemoteUrl,
+  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+} from "../githubRemote.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
 import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
@@ -90,20 +94,6 @@ function resolvePullRequestWorktreeLocalBranchName(
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
   return `t3code/pr-${pullRequest.number}/${suffix}`;
-}
-
-function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -315,6 +305,23 @@ function shouldPreferSshRemote(url: string | null): boolean {
   return trimmed.startsWith("git@") || trimmed.startsWith("ssh://");
 }
 
+function parseUpstreamRef(
+  upstreamRef: string,
+): { remoteName: string; remoteBranch: string } | null {
+  const separatorIndex = upstreamRef.indexOf("/");
+  if (separatorIndex <= 0 || separatorIndex === upstreamRef.length - 1) {
+    return null;
+  }
+
+  const remoteName = upstreamRef.slice(0, separatorIndex).trim();
+  const remoteBranch = upstreamRef.slice(separatorIndex + 1).trim();
+  if (remoteName.length === 0 || remoteBranch.length === 0) {
+    return null;
+  }
+
+  return { remoteName, remoteBranch };
+}
+
 function toPullRequestHeadRemoteInfo(pr: {
   isCrossRepository?: boolean;
   headRepositoryNameWithOwner?: string | null;
@@ -335,6 +342,49 @@ export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
+
+  const ensureGitHubPushRemote = (cwd: string, branch: string, upstreamRef: string | null) =>
+    Effect.gen(function* () {
+      const upstreamRemoteName = parseUpstreamRef(upstreamRef ?? "")?.remoteName ?? "origin";
+      const remoteUrl = yield* gitCore.readConfigValue(cwd, `remote.${upstreamRemoteName}.url`);
+      if (!remoteUrl || shouldPreferSshRemote(remoteUrl)) {
+        return;
+      }
+
+      const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+      if (!repository) {
+        return;
+      }
+
+      const sshRemoteName = yield* gitCore.ensureRemote({
+        cwd,
+        preferredName: upstreamRemoteName,
+        url: buildGitHubSshRemoteUrl(repository),
+      });
+
+      const parsedUpstream = parseUpstreamRef(upstreamRef ?? "");
+      if (parsedUpstream) {
+        yield* gitCore.setBranchUpstream({
+          cwd,
+          branch,
+          remoteName: sshRemoteName,
+          remoteBranch: parsedUpstream.remoteBranch,
+        });
+        return;
+      }
+
+      yield* gitCore.writeConfigValue({
+        cwd,
+        key: `branch.${branch}.pushRemote`,
+        value: sshRemoteName,
+      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(
+          `GitManager.ensureGitHubPushRemote: failed to prepare SSH push remote for ${branch} in ${cwd}: ${error.message}`,
+        ).pipe(Effect.asVoid),
+      ),
+    );
 
   const configurePullRequestHeadUpstream = (
     cwd: string,
@@ -1044,6 +1094,10 @@ export const makeGitManager = Effect.gen(function* () {
         input.filePaths,
         input.textGenerationModel,
       );
+
+      if (wantsPush && currentBranch) {
+        yield* ensureGitHubPushRemote(input.cwd, currentBranch, initialStatus.upstreamRef);
+      }
 
       const push = wantsPush
         ? yield* gitCore.pushCurrentBranch(input.cwd, currentBranch)

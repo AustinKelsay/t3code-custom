@@ -1096,6 +1096,9 @@ export const makeGitCore = Effect.gen(function* () {
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const writeConfigValue: GitCoreShape["writeConfigValue"] = (input) =>
+    runGit("GitCore.writeConfigValue", input.cwd, ["config", input.key, input.value]);
+
   const listBranches: GitCoreShape["listBranches"] = (input) =>
     Effect.gen(function* () {
       const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
@@ -1509,6 +1512,7 @@ export const makeGitCore = Effect.gen(function* () {
     pullCurrentBranch,
     readRangeContext,
     readConfigValue,
+    writeConfigValue,
     listBranches,
     createWorktree,
     fetchPullRequestBranch,

@@ -80,6 +80,7 @@ import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { makeGitHubCliShape, normalizeGitHubCliError } from "./git/makeGitHubCli.ts";
 import { makeTargetGitService } from "./git/makeTargetGitService.ts";
+import { makeTargetTextGeneration } from "./git/makeTargetTextGeneration.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -478,7 +479,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
     const targetGitCore = yield* getTargetGitCore(target);
     const remoteGitManager = yield* makeGitManager.pipe(
-      Effect.provideService(TextGeneration, textGeneration),
+      Effect.provideService(
+        TextGeneration,
+        makeTargetTextGeneration({
+          target,
+          textGeneration,
+          fallbackCwd: serverConfig.cwd,
+        }),
+      ),
       Effect.provideService(GitHubCli, makeTargetGitHubCli(target)),
       Effect.provideService(GitCore, targetGitCore),
     );

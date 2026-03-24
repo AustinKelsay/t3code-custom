@@ -20,7 +20,7 @@ type MermaidViewMode = "preview" | "code";
 type MermaidRenderState = "idle" | "loading" | "rendered" | "error";
 
 const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 3;
+const MAX_ZOOM = 10;
 const ZOOM_STEP = 0.2;
 
 function clampZoom(value: number): number {

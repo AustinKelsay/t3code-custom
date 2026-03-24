@@ -132,6 +132,7 @@ function createGitCoreHarness(overrides?: Partial<GitCoreShape>): GitCoreShape {
     pushCurrentBranch: unsupported,
     readRangeContext: unsupported,
     readConfigValue: unsupported,
+    writeConfigValue: unsupported,
     listBranches: unsupported,
     pullCurrentBranch: unsupported,
     createWorktree: unsupported,

@@ -83,6 +83,12 @@ export interface GitSetBranchUpstreamInput {
   remoteBranch: string;
 }
 
+export interface GitWriteConfigValueInput {
+  cwd: string;
+  key: string;
+  value: string;
+}
+
 /**
  * GitCoreShape - Service API for low-level Git repository interactions.
  */
@@ -144,6 +150,13 @@ export interface GitCoreShape {
     cwd: string,
     key: string,
   ) => Effect.Effect<string | null, GitCommandError>;
+
+  /**
+   * Write a Git config value in the local repository.
+   */
+  readonly writeConfigValue: (
+    input: GitWriteConfigValueInput,
+  ) => Effect.Effect<void, GitCommandError>;
 
   /**
    * List local + remote branches and branch metadata.
