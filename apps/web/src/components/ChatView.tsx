@@ -3279,12 +3279,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const stopVoiceConversation = useCallback(() => {
     stopSpeaking();
     voiceSession.stopListening();
-    if (settings.voiceAutoSpeakReplies) {
-      updateSettings({
-        voiceAutoSpeakReplies: false,
-      });
-    }
-  }, [settings.voiceAutoSpeakReplies, stopSpeaking, updateSettings, voiceSession]);
+  }, [stopSpeaking, voiceSession]);
 
   const cycleVoicePlaybackRate = useCallback(() => {
     const playbackRates: VoicePlaybackRate[] = ["0.75", "1.0", "1.25", "1.5", "1.75", "2.0"];
