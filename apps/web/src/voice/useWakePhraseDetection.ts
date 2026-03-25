@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_WAKE_PHRASE = "hey t3";
 const WAKE_PHRASE_COOLDOWN_MS = 3000;
+const RECOGNITION_RESTART_DELAY_MS = 250;
 
 interface WakePhraseRecognitionEvent {
   readonly resultIndex: number;
@@ -25,6 +26,7 @@ interface WakePhraseRecognition {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  maxAlternatives?: number;
   start(): void;
   stop(): void;
   abort(): void;
@@ -56,6 +58,53 @@ interface UseWakePhraseDetectionInput {
   readonly onWakePhrase: () => void;
 }
 
+function normalizeWakeText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function expandWakePhraseCandidates(phrase: string): string[] {
+  const normalized = normalizeWakeText(phrase);
+  const variants = new Set<string>();
+  if (normalized.length > 0) {
+    variants.add(normalized);
+  }
+
+  const withT3Expanded = normalized.replace(/\bt3\b/g, "t three");
+  if (withT3Expanded.length > 0) {
+    variants.add(withT3Expanded);
+  }
+
+  const withT3Compact = normalized.replace(/\bt three\b/g, "t3");
+  if (withT3Compact.length > 0) {
+    variants.add(withT3Compact);
+  }
+
+  for (const variant of Array.from(variants)) {
+    variants.add(variant.replace(/\bt three\b/g, "tee three"));
+    variants.add(variant.replace(/\bt three\b/g, "tea three"));
+    variants.add(variant.replace(/\bt3\b/g, "tee three"));
+    variants.add(variant.replace(/\bt3\b/g, "tea three"));
+  }
+
+  return Array.from(variants).filter((candidate) => candidate.length > 0);
+}
+
+function transcriptMatchesWakePhrase(transcript: string, candidates: readonly string[]): boolean {
+  const normalizedTranscript = normalizeWakeText(transcript);
+  if (!normalizedTranscript) {
+    return false;
+  }
+
+  return candidates.some(
+    (candidate) =>
+      normalizedTranscript.includes(candidate) || normalizedTranscript.endsWith(candidate),
+  );
+}
+
 export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
   const { enabled, phrase = DEFAULT_WAKE_PHRASE, onWakePhrase } = input;
   const [isSupported, setIsSupported] = useState(false);
@@ -63,19 +112,21 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
   const recognitionRef = useRef<WakePhraseRecognition | null>(null);
   const shouldRestartRef = useRef(false);
   const cooldownUntilRef = useRef(0);
+  const restartTimeoutRef = useRef<number | null>(null);
   const onWakePhraseRef = useRef(onWakePhrase);
 
   useEffect(() => {
     onWakePhraseRef.current = onWakePhrase;
   }, [onWakePhrase]);
 
-  const normalizedWakePhrase = useMemo(
-    () => phrase.trim().toLowerCase().replace(/\s+/g, " "),
-    [phrase],
-  );
+  const wakePhraseCandidates = useMemo(() => expandWakePhraseCandidates(phrase), [phrase]);
 
   const stopRecognition = useCallback(() => {
     shouldRestartRef.current = false;
+    if (restartTimeoutRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
     const recognition = recognitionRef.current;
     if (!recognition) {
       setIsListening(false);
@@ -92,7 +143,7 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
         ? null
         : (window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null);
     setIsSupported(Boolean(RecognitionConstructor));
-    if (!enabled || !RecognitionConstructor || normalizedWakePhrase.length === 0) {
+    if (!enabled || !RecognitionConstructor || wakePhraseCandidates.length === 0) {
       stopRecognition();
       return;
     }
@@ -102,6 +153,7 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
+    recognition.maxAlternatives = 3;
     recognitionRef.current = recognition;
     shouldRestartRef.current = true;
 
@@ -115,6 +167,19 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
       } catch {
         setIsListening(false);
       }
+    };
+
+    const scheduleRestart = () => {
+      if (!shouldRestartRef.current || cancelled || typeof window === "undefined") {
+        return;
+      }
+      if (restartTimeoutRef.current !== null) {
+        window.clearTimeout(restartTimeoutRef.current);
+      }
+      restartTimeoutRef.current = window.setTimeout(() => {
+        restartTimeoutRef.current = null;
+        startRecognition();
+      }, RECOGNITION_RESTART_DELAY_MS);
     };
 
     const handleResult = (event: WakePhraseRecognitionEvent) => {
@@ -131,8 +196,8 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
           }
         }
       }
-      const normalizedTranscript = transcripts.join(" ").trim().toLowerCase().replace(/\s+/g, " ");
-      if (!normalizedTranscript.includes(normalizedWakePhrase)) {
+      const transcript = transcripts.join(" ").trim();
+      if (!transcriptMatchesWakePhrase(transcript, wakePhraseCandidates)) {
         return;
       }
       const now = Date.now();
@@ -143,8 +208,14 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
       onWakePhraseRef.current();
     };
 
-    const handleError = () => {
+    const handleError = (event: WakePhraseRecognitionErrorEvent) => {
       setIsListening(false);
+      // Recognition often stops itself on transient conditions.
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        shouldRestartRef.current = false;
+        return;
+      }
+      scheduleRestart();
     };
 
     const handleEnd = () => {
@@ -152,7 +223,7 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
       if (!shouldRestartRef.current || cancelled) {
         return;
       }
-      startRecognition();
+      scheduleRestart();
     };
 
     recognition.addEventListener("result", handleResult);
@@ -168,11 +239,11 @@ export function useWakePhraseDetection(input: UseWakePhraseDetectionInput) {
       recognition.removeEventListener("end", handleEnd);
       stopRecognition();
     };
-  }, [enabled, normalizedWakePhrase, stopRecognition]);
+  }, [enabled, stopRecognition, wakePhraseCandidates]);
 
   return {
     isSupported,
     isListening,
-    wakePhrase: normalizedWakePhrase || DEFAULT_WAKE_PHRASE,
+    wakePhrase: wakePhraseCandidates[0] ?? DEFAULT_WAKE_PHRASE,
   } as const;
 }
