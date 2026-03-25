@@ -54,6 +54,7 @@ import {
   PortForwardListInput,
   PortForwardOpenInput,
 } from "./portForward";
+import { VoiceRealtimeSessionCreateInput, VoiceSpeechSynthesisInput } from "./voice";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -103,6 +104,8 @@ export const WS_METHODS = {
   executionTargetUpsert: "executionTarget.upsert",
   executionTargetRemove: "executionTarget.remove",
   executionTargetCheckHealth: "executionTarget.checkHealth",
+  voiceRealtimeSessionCreate: "voice.realtimeSession.create",
+  voiceSpeechSynthesize: "voice.speech.synthesize",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -179,6 +182,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.executionTargetUpsert, ExecutionTargetUpsertInput),
   tagRequestBody(WS_METHODS.executionTargetRemove, ExecutionTargetRemoveInput),
   tagRequestBody(WS_METHODS.executionTargetCheckHealth, ExecutionTargetCheckHealthInput),
+  tagRequestBody(WS_METHODS.voiceRealtimeSessionCreate, VoiceRealtimeSessionCreateInput),
+  tagRequestBody(WS_METHODS.voiceSpeechSynthesize, VoiceSpeechSynthesisInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

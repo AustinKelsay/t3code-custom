@@ -161,3 +161,214 @@ export function buildExpiredTerminalContextToastCopy(
     description: "Re-add it if you want that terminal output included.",
   };
 }
+
+export function resolveLatestAuthoritativeAssistantMessage(options: {
+  messages: readonly ChatMessage[] | null | undefined;
+  preferredAssistantMessageId?: string | null;
+  preferTurnCompletion?: boolean;
+}): ChatMessage | null {
+  const { messages, preferredAssistantMessageId, preferTurnCompletion = true } = options;
+  if (!messages || messages.length === 0) {
+    return null;
+  }
+
+  const completedAssistantMessages = messages.filter(
+    (message) =>
+      message.role === "assistant" && !message.streaming && message.text.trim().length > 0,
+  );
+  if (completedAssistantMessages.length === 0) {
+    return null;
+  }
+
+  if (preferTurnCompletion && preferredAssistantMessageId) {
+    const preferredMessage = completedAssistantMessages.find(
+      (message) => message.id === preferredAssistantMessageId,
+    );
+    if (preferredMessage) {
+      return preferredMessage;
+    }
+  }
+
+  return completedAssistantMessages.at(-1) ?? null;
+}
+
+export function resolveLatestNarratableAssistantMessage(options: {
+  messages: readonly ChatMessage[] | null | undefined;
+  preferredAssistantMessageId?: string | null;
+  preferTurnCompletion?: boolean;
+}): ChatMessage | null {
+  const { messages, preferredAssistantMessageId, preferTurnCompletion = true } = options;
+  if (!messages || messages.length === 0) {
+    return null;
+  }
+
+  const assistantMessages = messages.filter(
+    (message) => message.role === "assistant" && message.text.trim().length > 0,
+  );
+  if (assistantMessages.length === 0) {
+    return null;
+  }
+
+  if (preferTurnCompletion && preferredAssistantMessageId) {
+    const preferredMessage = assistantMessages.find(
+      (message) => message.id === preferredAssistantMessageId,
+    );
+    if (preferredMessage) {
+      return preferredMessage;
+    }
+  }
+
+  return assistantMessages.at(-1) ?? null;
+}
+
+function collapseSummaryWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function stripSummaryMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/gu, " ")
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/^\s{0,3}(?:[-*+]|\d+\.)\s+/gmu, "")
+    .replace(/^#{1,6}\s+/gmu, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1");
+}
+
+function truncateSummary(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const truncated = text.slice(0, Math.max(0, maxLength - 3)).trimEnd();
+  return `${truncated}...`;
+}
+
+function splitSummarySentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+}
+
+function extractSummaryBullets(text: string, maxItems: number): string[] {
+  const bullets = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^([-*+]|\d+\.)\s+/u.test(line))
+    .map((line) => stripSummaryMarkdown(line))
+    .map((line) => collapseSummaryWhitespace(line))
+    .filter((line) => line.length > 0);
+
+  return bullets.slice(0, maxItems);
+}
+
+export interface FinalProviderAnswerSummary {
+  overview: string;
+  bulletPoints: string[];
+}
+
+export function renderFinalProviderAnswerSummaryForSpeech(
+  summary: FinalProviderAnswerSummary | null,
+): string {
+  if (!summary) {
+    return "";
+  }
+
+  const parts = [summary.overview, ...summary.bulletPoints].filter((part) => part.length > 0);
+  return collapseSummaryWhitespace(parts.join(" "));
+}
+
+export function extractAssistantNarrationChunks(options: {
+  text: string;
+  spokenChunkCount: number;
+  isComplete: boolean;
+}): { chunks: string[]; nextSpokenChunkCount: number } {
+  const normalized = collapseSummaryWhitespace(stripSummaryMarkdown(options.text));
+  if (!normalized) {
+    return { chunks: [], nextSpokenChunkCount: options.spokenChunkCount };
+  }
+
+  const sentences = splitSummarySentences(normalized);
+  if (sentences.length === 0) {
+    return options.isComplete
+      ? { chunks: [normalized], nextSpokenChunkCount: options.spokenChunkCount + 1 }
+      : { chunks: [], nextSpokenChunkCount: options.spokenChunkCount };
+  }
+
+  const endsWithSentenceBoundary = /[.!?]["')\]]?\s*$/u.test(normalized);
+  const speakableSentences =
+    options.isComplete || endsWithSentenceBoundary ? sentences : sentences.slice(0, -1);
+  const chunks = speakableSentences.slice(options.spokenChunkCount).filter((sentence, index) => {
+    if (options.spokenChunkCount + index > 0) {
+      return true;
+    }
+
+    const wordCount = sentence.split(/\s+/u).filter((word) => word.length > 0).length;
+    return sentence.length >= 24 || wordCount >= 5 || /[.!?]["')\]]$/u.test(sentence);
+  });
+
+  return {
+    chunks,
+    nextSpokenChunkCount: options.spokenChunkCount + chunks.length,
+  };
+}
+
+export function buildFinalProviderAnswerSummary(
+  text: string,
+  options: {
+    maxOverviewLength?: number;
+    maxBulletCount?: number;
+    maxBulletLength?: number;
+  } = {},
+): FinalProviderAnswerSummary | null {
+  const { maxOverviewLength = 220, maxBulletCount = 3, maxBulletLength = 120 } = options;
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalizedParagraph = collapseSummaryWhitespace(
+    stripSummaryMarkdown(
+      trimmed.split(/\n\s*\n/u).find((segment) => segment.trim().length > 0) ?? trimmed,
+    ),
+  );
+  if (!normalizedParagraph) {
+    return null;
+  }
+
+  const sentences = splitSummarySentences(normalizedParagraph);
+
+  if (sentences.length === 0) {
+    return {
+      overview: truncateSummary(normalizedParagraph, maxOverviewLength),
+      bulletPoints: extractSummaryBullets(trimmed, maxBulletCount).map((bullet) =>
+        truncateSummary(bullet, maxBulletLength),
+      ),
+    };
+  }
+
+  const selected: string[] = [];
+  for (const sentence of sentences) {
+    const nextSummary = collapseSummaryWhitespace([...selected, sentence].join(" "));
+    if (selected.length > 0 && nextSummary.length > maxOverviewLength) {
+      break;
+    }
+    selected.push(sentence);
+    if (selected.length >= 2) {
+      break;
+    }
+  }
+
+  const overview = truncateSummary(
+    collapseSummaryWhitespace(selected.join(" ")) || normalizedParagraph,
+    maxOverviewLength,
+  );
+  const overviewSentences = new Set(splitSummarySentences(overview));
+  const bulletPoints = extractSummaryBullets(trimmed, maxBulletCount)
+    .map((bullet) => truncateSummary(bullet, maxBulletLength))
+    .filter((bullet) => !overviewSentences.has(bullet));
+
+  return {
+    overview,
+    bulletPoints,
+  };
+}

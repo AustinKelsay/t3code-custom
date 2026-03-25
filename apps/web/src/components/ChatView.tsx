@@ -125,6 +125,7 @@ import {
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   resolveAppModelSelection,
+  type VoicePlaybackRate,
   useAppSettings,
 } from "../appSettings";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -149,6 +150,7 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { VoiceControlsGroup } from "./chat/VoiceControlsGroup";
 import {
   resolveProjectHeaderClassName,
   resolveProjectHeaderStyle,
@@ -170,6 +172,8 @@ import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildExpiredTerminalContextToastCopy,
+  extractAssistantNarrationChunks,
+  resolveLatestNarratableAssistantMessage,
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
@@ -184,6 +188,8 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useRealtimeSpeechOutput } from "../voice/useRealtimeSpeechOutput";
+import { useVoiceSession } from "../voice/useVoiceSession";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -248,7 +254,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
-  const { settings } = useAppSettings();
+  const { settings, updateSettings } = useAppSettings();
   const setStickyComposerModel = useComposerDraftStore((store) => store.setStickyModel);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
@@ -346,6 +352,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
+  const narratedAssistantMessageRef = useRef<{
+    messageId: MessageId | null;
+    spokenChunkCount: number;
+  }>({
+    messageId: null,
+    spokenChunkCount: 0,
+  });
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
@@ -2117,6 +2130,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendStartedAt(null);
   }, []);
 
+  const completeSendSubmission = useCallback(() => {
+    sendInFlightRef.current = false;
+    resetSendPhase();
+  }, [resetSendPhase]);
+
   useEffect(() => {
     if (sendPhase === "idle") {
       return;
@@ -2680,6 +2698,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      completeSendSubmission();
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
@@ -2721,6 +2740,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     }
   };
+  const onSendRef = useRef(onSend);
+  useEffect(() => {
+    onSendRef.current = onSend;
+  }, [onSend]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -2989,6 +3012,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             : {}),
           createdAt: messageCreatedAt,
         });
+        completeSendSubmission();
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
@@ -3014,6 +3038,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProposedPlan,
       beginSendPhase,
       forceStickToBottom,
+      completeSendSubmission,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -3107,7 +3132,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt,
         });
       })
-      .then(() => api.orchestration.getSnapshot())
+      .then(() => {
+        completeSendSubmission();
+        return api.orchestration.getSnapshot();
+      })
       .then((snapshot) => {
         syncServerReadModel(snapshot);
         // Signal that the plan sidebar should open on the new thread.
@@ -3145,6 +3173,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeTargetId,
     activeThread,
     beginSendPhase,
+    completeSendSubmission,
     isConnecting,
     isSendBusy,
     isServerThread,
@@ -3159,6 +3188,112 @@ export default function ChatView({ threadId }: ChatViewProps) {
     settings.enableAssistantStreaming,
     syncServerReadModel,
   ]);
+
+  const onVoiceFinalTranscript = useCallback(
+    async (text: string) => {
+      const normalized = text.trim();
+      if (!normalized) {
+        return;
+      }
+      promptRef.current = normalized;
+      setPrompt(normalized);
+      setComposerCursor(collapseExpandedComposerCursor(normalized, normalized.length));
+      setComposerTrigger(detectComposerTrigger(normalized, normalized.length));
+      await onSendRef.current();
+    },
+    [setPrompt],
+  );
+
+  const voiceSession = useVoiceSession({
+    threadId,
+    enabled: settings.voiceEnabled,
+    liveRepliesEnabled: false,
+    model: settings.voiceModel.trim() || null,
+    voice: settings.voiceName.trim() || null,
+    onFinalTranscript: onVoiceFinalTranscript,
+  });
+  const {
+    stopSpeaking,
+    skipCurrentSentence,
+    speakText: speakAssistantText,
+  } = useRealtimeSpeechOutput({
+    threadId,
+    enabled: settings.voiceEnabled && settings.voiceAutoSpeakReplies,
+    model: settings.voiceModel.trim() || null,
+    voice: settings.voiceName.trim() || null,
+    instructions: settings.voiceInstructions.trim() || null,
+    playbackRate: Number(settings.voicePlaybackRate),
+    onUtteranceStart: voiceSession.pauseListening,
+    onUtteranceEnd: voiceSession.resumeListening,
+  });
+
+  const latestNarratableAssistantMessage = useMemo(() => {
+    return resolveLatestNarratableAssistantMessage({
+      messages: serverMessages,
+      preferredAssistantMessageId: activeLatestTurn?.assistantMessageId ?? null,
+      preferTurnCompletion: Boolean(activeLatestTurn?.assistantMessageId),
+    });
+  }, [activeLatestTurn?.assistantMessageId, serverMessages]);
+
+  useEffect(() => {
+    const assistantMessage = latestNarratableAssistantMessage;
+    if (!assistantMessage || !settings.voiceAutoSpeakReplies) {
+      return;
+    }
+
+    if (narratedAssistantMessageRef.current.messageId !== assistantMessage.id) {
+      narratedAssistantMessageRef.current = {
+        messageId: assistantMessage.id,
+        spokenChunkCount: 0,
+      };
+    }
+
+    const { chunks, nextSpokenChunkCount } = extractAssistantNarrationChunks({
+      text: assistantMessage.text,
+      spokenChunkCount: narratedAssistantMessageRef.current.spokenChunkCount,
+      isComplete: !assistantMessage.streaming,
+    });
+    if (chunks.length === 0) {
+      return;
+    }
+
+    narratedAssistantMessageRef.current = {
+      messageId: assistantMessage.id,
+      spokenChunkCount: nextSpokenChunkCount,
+    };
+    for (const chunk of chunks) {
+      speakAssistantText(chunk);
+    }
+  }, [latestNarratableAssistantMessage, settings.voiceAutoSpeakReplies, speakAssistantText]);
+
+  const startVoiceConversation = useCallback(() => {
+    if (!settings.voiceAutoSpeakReplies) {
+      updateSettings({
+        voiceAutoSpeakReplies: true,
+      });
+    }
+    stopSpeaking();
+    void voiceSession.startListening();
+  }, [settings.voiceAutoSpeakReplies, stopSpeaking, updateSettings, voiceSession]);
+
+  const stopVoiceConversation = useCallback(() => {
+    stopSpeaking();
+    voiceSession.stopListening();
+    if (settings.voiceAutoSpeakReplies) {
+      updateSettings({
+        voiceAutoSpeakReplies: false,
+      });
+    }
+  }, [settings.voiceAutoSpeakReplies, stopSpeaking, updateSettings, voiceSession]);
+
+  const cycleVoicePlaybackRate = useCallback(() => {
+    const playbackRates: VoicePlaybackRate[] = ["0.75", "1.0", "1.25", "1.5", "1.75", "2.0"];
+    const currentIndex = playbackRates.indexOf(settings.voicePlaybackRate);
+    const nextRate = playbackRates[(currentIndex + 1) % playbackRates.length] ?? "1.0";
+    updateSettings({
+      voicePlaybackRate: nextRate,
+    });
+  }, [settings.voicePlaybackRate, updateSettings]);
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
@@ -3562,6 +3697,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           gitCwd={gitCwd}
           targetId={activeTargetId}
           diffOpen={diffOpen}
+          voicePhase={voiceSession.phase}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -3876,6 +4012,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             <span className="sr-only">Attach</span>
                           )}
                         </Button>
+
+                        <VoiceControlsGroup
+                          phase={voiceSession.phase}
+                          permissionState={voiceSession.permissionState}
+                          micDisabled={
+                            isComposerApprovalState ||
+                            pendingUserInputs.length > 0 ||
+                            activePendingProgress != null ||
+                            isConnecting ||
+                            isSendBusy ||
+                            phase === "running" ||
+                            !settings.voiceEnabled
+                          }
+                          speakerEnabled={settings.voiceAutoSpeakReplies}
+                          playbackRateLabel={`${settings.voicePlaybackRate}x`}
+                          speakerDisabled={!settings.voiceEnabled || isConnecting}
+                          skipDisabled={!settings.voiceEnabled || !settings.voiceAutoSpeakReplies}
+                          playbackRateDisabled={!settings.voiceEnabled}
+                          onStart={startVoiceConversation}
+                          onStop={stopVoiceConversation}
+                          onToggleSpeaker={() => {
+                            updateSettings({
+                              voiceAutoSpeakReplies: !settings.voiceAutoSpeakReplies,
+                            });
+                          }}
+                          onCyclePlaybackRate={cycleVoicePlaybackRate}
+                          onSkip={skipCurrentSentence}
+                        />
 
                         {/* Provider/model picker */}
                         <ProviderModelPicker

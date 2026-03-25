@@ -185,6 +185,11 @@ export function createWsNativeApi(): NativeApi {
       checkExecutionTargetHealth: (input) =>
         transport.request(WS_METHODS.executionTargetCheckHealth, input),
     },
+    voice: {
+      createRealtimeSession: (input) =>
+        transport.request(WS_METHODS.voiceRealtimeSessionCreate, input),
+      synthesizeSpeech: (input) => transport.request(WS_METHODS.voiceSpeechSynthesize, input),
+    },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
