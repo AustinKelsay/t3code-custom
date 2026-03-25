@@ -215,6 +215,8 @@ const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const PUSH_TO_TALK_SPACE_CODE = "Space";
 const PUSH_TO_TALK_RELEASE_PADDING_MS = 500;
+const VOICE_SEND_READY_TIMEOUT_MS = 2500;
+const VOICE_SEND_READY_POLL_MS = 75;
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -366,8 +368,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const pushToTalkActiveRef = useRef(false);
   const pushToTalkStopTimeoutRef = useRef<number | null>(null);
-  const pushToTalkResumeSpeechRef = useRef(false);
-  const interruptedReadbackRef = useRef(false);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -497,6 +497,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const activeThreadRef = useRef(activeThread);
+  activeThreadRef.current = activeThread;
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -2752,9 +2754,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
   };
   const onSendRef = useRef(onSend);
-  useEffect(() => {
-    onSendRef.current = onSend;
-  }, [onSend]);
+  onSendRef.current = onSend;
+
+  const waitForVoiceSendReady = useCallback(async () => {
+    const deadline = Date.now() + VOICE_SEND_READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (
+        readNativeApi() &&
+        activeThreadRef.current &&
+        !isSendBusy &&
+        !isConnecting &&
+        !sendInFlightRef.current
+      ) {
+        return true;
+      }
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, VOICE_SEND_READY_POLL_MS);
+      });
+    }
+    return Boolean(
+      readNativeApi() &&
+      activeThreadRef.current &&
+      !isSendBusy &&
+      !isConnecting &&
+      !sendInFlightRef.current,
+    );
+  }, [isConnecting, isSendBusy]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -3201,8 +3226,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const {
-    pauseSpeaking,
-    resumeSpeaking,
+    blockSpeaking,
+    unblockSpeaking,
     stopSpeaking,
     skipCurrentSentence,
     registerListeningCallbacks,
@@ -3214,15 +3239,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!normalized) {
         return;
       }
-      interruptedReadbackRef.current = false;
       stopSpeaking();
       promptRef.current = normalized;
       setPrompt(normalized);
       setComposerCursor(collapseExpandedComposerCursor(normalized, normalized.length));
       setComposerTrigger(detectComposerTrigger(normalized, normalized.length));
+      const ready = await waitForVoiceSendReady();
+      if (!ready) {
+        toastManager.add({
+          type: "error",
+          title: "Voice message did not send",
+          description: "The chat was not ready yet. Try speaking again.",
+        });
+        return;
+      }
       await onSendRef.current(undefined, { promptOverride: normalized });
     },
-    [setPrompt, stopSpeaking],
+    [setPrompt, stopSpeaking, waitForVoiceSendReady],
   );
 
   const voiceSession = useVoiceSession({
@@ -3252,17 +3285,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         voiceAutoSpeakReplies: true,
       });
     }
-    interruptedReadbackRef.current = pauseSpeaking();
+    blockSpeaking();
     void voiceSession.startListening();
-  }, [pauseSpeaking, settings.voiceAutoSpeakReplies, updateSettings, voiceSession]);
+  }, [blockSpeaking, settings.voiceAutoSpeakReplies, updateSettings, voiceSession]);
 
   const stopVoiceConversation = useCallback(() => {
     voiceSession.stopListening();
-    if (interruptedReadbackRef.current) {
-      interruptedReadbackRef.current = false;
-      resumeSpeaking();
-    }
-  }, [resumeSpeaking, voiceSession]);
+    unblockSpeaking();
+  }, [unblockSpeaking, voiceSession]);
 
   const wakePhraseDetector = useWakePhraseDetection({
     enabled:
@@ -3280,23 +3310,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       voiceSession.phase !== "listening" &&
       !pushToTalkActiveRef.current,
     onWakePhrase: () => {
-      interruptedReadbackRef.current = pauseSpeaking();
+      blockSpeaking();
       void voiceSession.startWakePhraseListening();
     },
   });
 
   const startPushToTalkVoiceConversation = useCallback(() => {
-    pushToTalkResumeSpeechRef.current = pauseSpeaking();
+    blockSpeaking();
     void voiceSession.startListening();
-  }, [pauseSpeaking, voiceSession]);
+  }, [blockSpeaking, voiceSession]);
 
   const stopPushToTalkVoiceConversation = useCallback(() => {
     voiceSession.stopListening();
-    if (pushToTalkResumeSpeechRef.current) {
-      pushToTalkResumeSpeechRef.current = false;
-      resumeSpeaking();
-    }
-  }, [resumeSpeaking, voiceSession]);
+    unblockSpeaking();
+  }, [unblockSpeaking, voiceSession]);
 
   useEffect(() => {
     const clearScheduledPushToTalkStop = () => {

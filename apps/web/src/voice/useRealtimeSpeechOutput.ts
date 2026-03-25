@@ -42,6 +42,8 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   const playbackWatchdogTimeoutRef = useRef<number | null>(null);
   const pendingQueueSkipCountRef = useRef(0);
   const currentSkipPendingRef = useRef(false);
+  const playbackBlockedRef = useRef(false);
+  const blockedPlaybackHadActivityRef = useRef(false);
   const enabledRef = useRef(enabled);
   const modelRef = useRef(model);
   const voiceRef = useRef(voice);
@@ -222,6 +224,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   const maybePrefetchNextSentence = useCallback(async () => {
     if (
       !enabledRef.current ||
+      playbackBlockedRef.current ||
       pausedRef.current ||
       synthInFlightRef.current ||
       prefetchAbortControllerRef.current !== null ||
@@ -265,6 +268,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   const processQueue = useCallback(async () => {
     if (
       !enabledRef.current ||
+      playbackBlockedRef.current ||
       pausedRef.current ||
       playingRef.current ||
       synthInFlightRef.current
@@ -398,8 +402,10 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
 
       clearIdleFinishTimeout();
       queueRef.current.push(trimmedText);
-      void maybePrefetchNextSentence();
-      await processQueue();
+      if (!playbackBlockedRef.current) {
+        void maybePrefetchNextSentence();
+        await processQueue();
+      }
     },
     [clearIdleFinishTimeout, maybePrefetchNextSentence, processQueue],
   );
@@ -499,6 +505,8 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
 
   const stopSpeaking = useCallback(() => {
     queueRef.current = [];
+    playbackBlockedRef.current = false;
+    blockedPlaybackHadActivityRef.current = false;
     pausedRef.current = false;
     synthInFlightRef.current = false;
     pendingQueueSkipCountRef.current = 0;
@@ -527,6 +535,30 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     revokeObjectUrl,
     revokePrefetchedClip,
   ]);
+
+  const blockSpeaking = useCallback(() => {
+    playbackBlockedRef.current = true;
+    const wasActive = pauseSpeaking();
+    blockedPlaybackHadActivityRef.current = wasActive;
+    return wasActive;
+  }, [pauseSpeaking]);
+
+  const unblockSpeaking = useCallback(() => {
+    if (!playbackBlockedRef.current) {
+      return;
+    }
+    playbackBlockedRef.current = false;
+    const shouldResume = blockedPlaybackHadActivityRef.current;
+    blockedPlaybackHadActivityRef.current = false;
+    if (shouldResume) {
+      resumeSpeaking();
+      return;
+    }
+    if (queueRef.current.length > 0 || prefetchedClipRef.current !== null) {
+      void maybePrefetchNextSentence();
+      void processQueueRef.current?.();
+    }
+  }, [maybePrefetchNextSentence, resumeSpeaking]);
 
   useEffect(() => {
     const audioElement = ensureAudioElement();
@@ -595,6 +627,8 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   return {
     speakText,
     skipCurrentSentence,
+    blockSpeaking,
+    unblockSpeaking,
     pauseSpeaking,
     resumeSpeaking,
     stopSpeaking,

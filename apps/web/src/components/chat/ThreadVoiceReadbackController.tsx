@@ -15,6 +15,8 @@ interface ListeningCallbacks {
 }
 
 interface ThreadVoiceReadbackContextValue {
+  readonly blockSpeaking: () => boolean;
+  readonly unblockSpeaking: () => void;
   readonly pauseSpeaking: () => boolean;
   readonly resumeSpeaking: () => void;
   readonly stopSpeaking: () => void;
@@ -25,6 +27,8 @@ interface ThreadVoiceReadbackContextValue {
 const NOOP = () => {};
 
 const ThreadVoiceReadbackContext = createContext<ThreadVoiceReadbackContextValue>({
+  blockSpeaking: () => false,
+  unblockSpeaking: NOOP,
   pauseSpeaking: () => false,
   resumeSpeaking: NOOP,
   stopSpeaking: NOOP,
@@ -61,6 +65,8 @@ export function ThreadVoiceReadbackProvider(props: {
   }, []);
 
   const {
+    blockSpeaking,
+    unblockSpeaking,
     pauseSpeaking,
     resumeSpeaking,
     stopSpeaking,
@@ -129,12 +135,22 @@ export function ThreadVoiceReadbackProvider(props: {
   const value = useMemo<ThreadVoiceReadbackContextValue>(
     () => ({
       pauseSpeaking,
+      blockSpeaking,
+      unblockSpeaking,
       resumeSpeaking,
       stopSpeaking,
       skipCurrentSentence,
       registerListeningCallbacks,
     }),
-    [pauseSpeaking, registerListeningCallbacks, resumeSpeaking, skipCurrentSentence, stopSpeaking],
+    [
+      blockSpeaking,
+      pauseSpeaking,
+      registerListeningCallbacks,
+      resumeSpeaking,
+      skipCurrentSentence,
+      stopSpeaking,
+      unblockSpeaking,
+    ],
   );
 
   return (

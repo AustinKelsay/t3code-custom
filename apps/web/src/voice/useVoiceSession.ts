@@ -26,7 +26,6 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
   const {
     threadId,
     enabled,
-    wakePhraseEnabled = false,
     liveRepliesEnabled,
     model,
     voice,
@@ -51,10 +50,15 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
   const transcriptPreviewRef = useRef("");
   const utteranceHandledRef = useRef(false);
   const { playListeningStartCue, playListeningStopCue } = useVoiceCuePlayer();
+  const onFinalTranscriptRef = useRef(onFinalTranscript);
   const {
     startMonitoring: startVoiceActivityMonitoring,
     stopMonitoring: stopVoiceActivityMonitoring,
   } = useVoiceActivityMonitor();
+
+  useEffect(() => {
+    onFinalTranscriptRef.current = onFinalTranscript;
+  }, [onFinalTranscript]);
 
   useEffect(() => {
     phaseRef.current = state.phase;
@@ -214,7 +218,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
       } else {
         pendingLiveReplyRef.current = true;
       }
-      void Promise.resolve(onFinalTranscript(normalizedTranscript))
+      void Promise.resolve(onFinalTranscriptRef.current(normalizedTranscript))
         .then(() => undefined)
         .catch((error: unknown) => {
           dispatch({
@@ -230,7 +234,6 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
       clearSilenceFallbackTimeouts,
       finishAutoStopAfterTranscript,
       liveRepliesEnabled,
-      onFinalTranscript,
       stopVoiceActivityMonitoring,
     ],
   );
@@ -649,15 +652,6 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
   useEffect(() => {
     void syncBrowserPermissionState();
   }, [syncBrowserPermissionState]);
-
-  useEffect(() => {
-    if (!enabled || !wakePhraseEnabled) {
-      return;
-    }
-    void ensureMicrophoneAccess()
-      .then(() => connectSession())
-      .catch(() => undefined);
-  }, [connectSession, enabled, ensureMicrophoneAccess, wakePhraseEnabled]);
 
   useEffect(() => closeSession, [closeSession]);
 
