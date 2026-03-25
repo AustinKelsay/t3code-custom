@@ -33,6 +33,32 @@ When the user taps the mic button in the chat composer:
 
 Voice input is off by default on app boot. It only becomes active after the user explicitly starts listening.
 
+The shipped implementation now supports three input entry points:
+
+1. mic button
+2. desktop `Space` push-to-talk
+3. `Hey T3` wake phrase mode
+
+Current `Space` behavior:
+
+- holding `Space` starts listening
+- releasing `Space` stops listening
+- a `500ms` release buffer is applied so slightly early release does not clip the utterance
+- `Space` is ignored while focus is inside editable inputs
+
+Current `Hey T3` behavior:
+
+- browser speech recognition listens for the wake phrase separately from the Realtime input session
+- saying `Hey T3` triggers the same normal voice-input path as the mic button
+- wake mode no longer prewarms the Realtime input session on page load because that caused first-attempt reliability problems
+
+The input flow also includes audible cues and configurable silence finalization:
+
+- start ding when listening actually begins
+- end ding when the utterance finalizes
+- configurable silence timeout, default `3.0s`
+- client-side fallback finalization if server VAD does not finish reliably
+
 ### Output
 
 Assistant speech is not generated directly from the Realtime input session.
@@ -47,12 +73,22 @@ Instead:
 
 This means the spoken output follows the real Codex/Claude response rather than a separate provisional answer path.
 
+Current readback behavior:
+
+- streamed assistant text is spoken sentence-by-sentence
+- the next sentence is prefetched while the current one is playing to reduce pause length after periods
+- if the user interrupts with `Space` or `Hey T3`, current readback pauses
+- after the user finishes, playback can resume from the paused sentence position
+- if the user’s interruption becomes a new turn, stale readback is canceled
+
 ### Handoff Rules
 
 - Input listening and output playback are separate concerns.
 - While spoken output is playing, the app pauses input listening.
+- While the mic is actively listening, new spoken readback is blocked so assistant audio does not start underneath the user.
 - After playback finishes, the app can re-arm listening according to the current chat control state.
 - Stop means stop listening. The app should not keep a hidden hot mic running.
+- Stop no longer forces speaker mute. Mic and speaker are decoupled.
 
 ## Architecture
 
@@ -104,9 +140,10 @@ The bottom composer uses a compact grouped voice control.
 Current controls:
 
 1. mic button
-2. speaker mute/unmute button
-3. speed button
-4. skip button
+2. `Hey T3` wake button
+3. speaker mute/unmute button
+4. speed button
+5. skip button
 
 Notes:
 
@@ -114,6 +151,11 @@ Notes:
 - The mic button is icon-only.
 - The old inline `Voice`, `Listening`, and `Ready` labels were removed.
 - Mobile tap targets are intentionally larger than desktop.
+- On mobile, the main voice group is intentionally smaller:
+  - mic
+  - `Hey T3`
+  - speaker mute
+- On mobile, speed and skip live in the overflow menu instead of the main group.
 
 ### Header
 
@@ -131,18 +173,22 @@ Current settings:
 
 - `voiceEnabled`
 - `voiceAutoSpeakReplies`
+- `voiceWakePhraseEnabled`
 - `voiceModel`
 - `voiceName`
 - `voicePlaybackRate`
+- `voiceSilenceDuration`
 - `voiceInstructions`
 
 Current defaults:
 
 - `voiceEnabled = true`
 - `voiceAutoSpeakReplies = true`
+- `voiceWakePhraseEnabled = false`
 - `voiceModel = ""`
 - `voiceName = ""`
 - `voicePlaybackRate = "1.5"`
+- `voiceSilenceDuration = "3.0"`
 - `voiceInstructions = "Speak in a motivating, friendly, natural tone. Keep delivery clear, conversational, and concise without sounding robotic."`
 
 ### Voice Name
@@ -180,6 +226,26 @@ The settings page exposes the full control, and the chat footer includes an inli
 
 The user can provide voice style instructions that are passed to OpenAI TTS. This is intended for tone and delivery preferences rather than content changes.
 
+### Wake Phrase
+
+The settings page exposes `Hey T3` wake mode as an explicit toggle.
+
+Wake phrase detection currently:
+
+- normalizes transcript text
+- matches variants like `t3`, `t three`, `tee three`, and `tea three`
+- restarts browser recognition after transient failures when supported
+
+### Silence Timeout
+
+The settings page exposes `Voice silence timeout`.
+
+This value controls:
+
+- the Realtime VAD silence window
+- the web fallback finalization window
+- when the end ding should occur for one-shot listening flows
+
 ### OpenAI Usage Link
 
 The settings page includes a link back to OpenAI usage so token and cost consumption can be checked directly in the platform UI.
@@ -205,12 +271,15 @@ The settings page includes a link back to OpenAI usage so token and cost consump
 - [voiceReducer.ts](/home/clawd/code/t3code/apps/web/src/voice/voiceReducer.ts)
 - [voiceSessionRegistry.ts](/home/clawd/code/t3code/apps/web/src/voice/voiceSessionRegistry.ts)
 - [useRealtimeSpeechOutput.ts](/home/clawd/code/t3code/apps/web/src/voice/useRealtimeSpeechOutput.ts)
+- [useWakePhraseDetection.ts](/home/clawd/code/t3code/apps/web/src/voice/useWakePhraseDetection.ts)
+- [useVoiceCuePlayer.ts](/home/clawd/code/t3code/apps/web/src/voice/useVoiceCuePlayer.ts)
 - [types.ts](/home/clawd/code/t3code/apps/web/src/voice/types.ts)
 
 ### Web UI
 
 - [ChatView.tsx](/home/clawd/code/t3code/apps/web/src/components/ChatView.tsx)
 - [ChatHeader.tsx](/home/clawd/code/t3code/apps/web/src/components/chat/ChatHeader.tsx)
+- [ThreadVoiceReadbackController.tsx](/home/clawd/code/t3code/apps/web/src/components/chat/ThreadVoiceReadbackController.tsx)
 - [VoiceControlsGroup.tsx](/home/clawd/code/t3code/apps/web/src/components/chat/VoiceControlsGroup.tsx)
 - [VoiceStatusBadge.tsx](/home/clawd/code/t3code/apps/web/src/components/chat/VoiceStatusBadge.tsx)
 - [VoiceTranscriptPreview.tsx](/home/clawd/code/t3code/apps/web/src/components/chat/VoiceTranscriptPreview.tsx)
@@ -290,6 +359,9 @@ Responsibilities:
 - request a Realtime client secret
 - create and manage the input Realtime session
 - manage mic permission flow
+- manage wake-triggered one-shot listening
+- manage silence-timeout finalization and fallback submission
+- play input start/end cues at real session transitions
 - expose listening state to the chat UI
 - emit final transcript text back into the normal send path
 
@@ -297,6 +369,7 @@ Important rule:
 
 - the app should not start listening on boot
 - the input session should only become active after explicit user action
+- wake mode should not eagerly preconnect the Realtime input session on page load
 
 ### `useRealtimeSpeechOutput`
 
@@ -307,6 +380,8 @@ Responsibilities:
 - synthesize queued chunks through the server TTS API
 - play them in order
 - support skipping the current sentence
+- support blocking readback while the mic is active
+- support pause/resume when the user interrupts speech
 - apply the configured playback speed to every chunk
 
 Playback-rate handling is intentionally aggressive because browsers may reset rate on new source assignment. The hook reapplies the chosen rate when:
@@ -317,12 +392,31 @@ Playback-rate handling is intentionally aggressive because browsers may reset ra
 - playback starts
 - the user changes speed during a session
 
+The hook also:
+
+- prefetches the next sentence while the current one is playing
+- uses a playback watchdog so the queue can still advance if the browser misses an `ended` event
+- supports multi-skip behavior when the user taps skip multiple times quickly
+
+### `ThreadVoiceReadbackController`
+
+This route-level provider keeps readback alive even when the user is not on the main chat tab.
+
+Current behavior:
+
+- mounted at the thread route level
+- stays alive across `chat`, `notes`, and `diff`
+- owns streamed assistant readback and sentence queueing
+- gives `ChatView` a thin control surface for pause, resume, stop, skip, and readback blocking
+
 ## Current Known Tradeoffs
 
 - Startup latency for spoken output is still bounded by a server round-trip plus TTS generation time.
 - Playback speed changes make speech shorter once audio starts, but they do not remove synthesis latency.
 - The system is optimized for sentence-by-sentence readback, not one giant post-turn summary.
 - Realtime input and TTS output are intentionally separate to avoid cross-session hot-mic failures.
+- Wake phrase quality still depends on the browser speech-recognition implementation.
+- `Hey T3` is more browser-dependent than `Space` push-to-talk, even after the startup reliability fixes.
 
 ## Upstream Merge Safety
 
@@ -343,11 +437,17 @@ The current implementation is considered correct when all of the following are t
 
 - voice input is off on initial page load
 - pressing the mic button starts listening
+- holding `Space` starts listening and releasing `Space` stops it with release padding
+- enabling `Hey T3` on load can still trigger a successful first-attempt wake utterance
 - final transcript becomes a normal thread turn
+- start and end cues line up with actual listening transitions
 - assistant streamed text is read back in a natural OpenAI voice
+- streamed readback pauses when the user interrupts with `Space` or `Hey T3`
+- no new assistant speech starts while the mic is actively listening
 - skip advances sentence-by-sentence through queued speech
 - speed changes affect newly spoken chunks
 - stop actually stops listening
+- spoken readback can continue while the user is on `notes` or `diff`
 - the compact composer controls remain usable on mobile
 - settings changes flow through to live voice behavior
 
