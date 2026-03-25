@@ -3452,6 +3452,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
     model: selectedModel,
     onPromptChange: setPromptFromTraits,
   });
+  const compactComposerControlsMenu = isComposerFooterCompact ? (
+    <CompactComposerControlsMenu
+      activePlan={Boolean(activePlan || sidebarProposedPlan || planSidebarOpen)}
+      extraMenuContent={
+        settings.voiceEnabled ? (
+          <>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Voice</div>
+            <MenuItem disabled={!settings.voiceEnabled} onClick={cycleVoicePlaybackRate}>
+              Speed: {settings.voicePlaybackRate}x
+            </MenuItem>
+            <MenuItem
+              disabled={!settings.voiceEnabled || !settings.voiceAutoSpeakReplies}
+              onClick={skipCurrentSentence}
+            >
+              Skip sentence
+            </MenuItem>
+          </>
+        ) : null
+      }
+      interactionMode={interactionMode}
+      planSidebarOpen={planSidebarOpen}
+      runtimeMode={runtimeMode}
+      traitsMenuContent={providerTraitsMenuContent}
+      onToggleInteractionMode={toggleInteractionMode}
+      onTogglePlanSidebar={togglePlanSidebar}
+      onToggleRuntimeMode={toggleRuntimeMode}
+    />
+  ) : null;
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
@@ -4083,7 +4111,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     <div
                       data-chat-composer-footer="true"
                       className={cn(
-                        "flex items-center justify-between pl-2.5 pr-3.5 pb-2.5 sm:px-3 sm:pb-3",
+                        "flex items-center justify-between pl-2 pr-2.5 pb-2.5 sm:px-3 sm:pb-3",
                         isComposerFooterCompact
                           ? "gap-1.5"
                           : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
@@ -4171,41 +4199,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         />
 
                         {isComposerFooterCompact ? (
-                          <CompactComposerControlsMenu
-                            activePlan={Boolean(
-                              activePlan || sidebarProposedPlan || planSidebarOpen,
-                            )}
-                            extraMenuContent={
-                              settings.voiceEnabled ? (
-                                <>
-                                  <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                                    Voice
-                                  </div>
-                                  <MenuItem
-                                    disabled={!settings.voiceEnabled}
-                                    onClick={cycleVoicePlaybackRate}
-                                  >
-                                    Speed: {settings.voicePlaybackRate}x
-                                  </MenuItem>
-                                  <MenuItem
-                                    disabled={
-                                      !settings.voiceEnabled || !settings.voiceAutoSpeakReplies
-                                    }
-                                    onClick={skipCurrentSentence}
-                                  >
-                                    Skip sentence
-                                  </MenuItem>
-                                </>
-                              ) : null
-                            }
-                            interactionMode={interactionMode}
-                            planSidebarOpen={planSidebarOpen}
-                            runtimeMode={runtimeMode}
-                            traitsMenuContent={providerTraitsMenuContent}
-                            onToggleInteractionMode={toggleInteractionMode}
-                            onTogglePlanSidebar={togglePlanSidebar}
-                            onToggleRuntimeMode={toggleRuntimeMode}
-                          />
+                          !useCompactTerminalPrompt ? (
+                            compactComposerControlsMenu
+                          ) : null
                         ) : (
                           <>
                             {providerTraitsPicker ? (
@@ -4303,8 +4299,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {/* Right side: send / stop button */}
                       <div
                         data-chat-composer-actions="right"
-                        className="flex shrink-0 items-center gap-2 pr-0.5 sm:pr-0"
+                        className={cn(
+                          "flex shrink-0 items-center pr-0 sm:pr-0",
+                          isComposerFooterCompact && useCompactTerminalPrompt ? "gap-1" : "gap-2",
+                        )}
                       >
+                        {isComposerFooterCompact && useCompactTerminalPrompt
+                          ? compactComposerControlsMenu
+                          : null}
                         {isPreparingWorktree ? (
                           <span className="text-muted-foreground/70 text-xs">
                             Preparing worktree...
