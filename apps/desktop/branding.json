@@ -1,0 +1,9 @@
+{
+  "productName": "T3 Code Custom",
+  "devProductName": "T3 Code Custom (Dev)",
+  "bundleId": "com.austinkelsay.t3codecustom",
+  "userDataDirName": "t3code-custom",
+  "devUserDataDirName": "t3code-custom-dev",
+  "legacyUserDataDirNames": ["t3code", "T3 Code (Alpha)"],
+  "legacyDevUserDataDirNames": ["t3code-dev", "T3 Code (Dev)"]
+}
