@@ -9,6 +9,7 @@ import {
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useState } from "react";
 
 import ChatView from "../components/ChatView";
+import { ThreadVoiceReadbackProvider } from "../components/chat/ThreadVoiceReadbackController";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
   DiffPanelHeaderSkeleton,
@@ -231,14 +232,18 @@ function ChatThreadRouteView() {
   const fullDiffOpen = Boolean(matchRoute({ to: "/$threadId/diff", params: { threadId } }));
   const notesOpen = Boolean(matchRoute({ to: "/$threadId/notes", params: { threadId } }));
   if (fullDiffOpen || notesOpen) {
-    return <Outlet />;
+    return (
+      <ThreadVoiceReadbackProvider threadId={threadId}>
+        <Outlet />
+      </ThreadVoiceReadbackProvider>
+    );
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
 
   if (!shouldUseDiffSheet) {
     return (
-      <>
+      <ThreadVoiceReadbackProvider threadId={threadId}>
         <SidebarInset
           className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground"
           style={{ height: APP_VIEWPORT_CSS_HEIGHT }}
@@ -251,12 +256,12 @@ function ChatThreadRouteView() {
           onOpenDiff={openDiff}
           renderDiffContent={shouldRenderDiffContent}
         />
-      </>
+      </ThreadVoiceReadbackProvider>
     );
   }
 
   return (
-    <>
+    <ThreadVoiceReadbackProvider threadId={threadId}>
       <SidebarInset
         className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground"
         style={{ height: APP_VIEWPORT_CSS_HEIGHT }}
@@ -266,7 +271,7 @@ function ChatThreadRouteView() {
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" onCloseDiff={closeDiff} /> : null}
       </DiffPanelSheet>
-    </>
+    </ThreadVoiceReadbackProvider>
   );
 }
 

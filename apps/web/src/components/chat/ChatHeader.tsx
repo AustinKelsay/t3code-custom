@@ -3,6 +3,7 @@ import {
   type ExecutionTargetId,
   type ProjectScript,
   type ThreadId,
+  type VoiceSessionPhase,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
@@ -11,6 +12,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { ThreadPageHeader } from "./ThreadPageHeader";
+import { VoiceStatusBadge } from "./VoiceStatusBadge";
 
 interface ChatHeaderProps {
   activeProjectColor: string | null;
@@ -28,6 +30,7 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   targetId: ExecutionTargetId;
   diffOpen: boolean;
+  voicePhase: VoiceSessionPhase;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -53,6 +56,7 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   targetId,
   diffOpen,
+  voicePhase,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -73,6 +77,7 @@ export const ChatHeader = memo(function ChatHeader({
       openInCwd={openInCwd}
       targetId={targetId}
     >
+      <VoiceStatusBadge phase={voicePhase} />
       {activeProjectScripts && (
         <div className="hidden sm:block">
           <ProjectScriptsControl

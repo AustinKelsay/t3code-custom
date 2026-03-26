@@ -67,6 +67,12 @@ import type {
   ThreadNotesGetInput,
   ThreadNotesUpsertInput,
 } from "./threadNotes";
+import type {
+  VoiceRealtimeClientSecret,
+  VoiceRealtimeSessionCreateInput,
+  VoiceSpeechSynthesisInput,
+  VoiceSpeechSynthesisResult,
+} from "./voice";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -199,6 +205,12 @@ export interface NativeApi {
     checkExecutionTargetHealth: (
       input: ExecutionTargetCheckHealthInput,
     ) => Promise<ExecutionTarget>;
+  };
+  voice: {
+    createRealtimeSession: (
+      input: VoiceRealtimeSessionCreateInput,
+    ) => Promise<VoiceRealtimeClientSecret>;
+    synthesizeSpeech: (input: VoiceSpeechSynthesisInput) => Promise<VoiceSpeechSynthesisResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

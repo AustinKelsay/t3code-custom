@@ -42,6 +42,8 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { ExecutionTargetServiceLive } from "./executionTarget/Layers/ExecutionTargetService";
 import { ExecutionTargetRuntimeLive } from "./executionTarget/Layers/ExecutionTargetRuntime";
 import { PortForwardManagerLive } from "./portForward/Layers/PortForwardManager";
+import { RealtimeTokenServiceLive } from "./voice/Layers/RealtimeTokenService";
+import { SpeechSynthesisServiceLive } from "./voice/Layers/SpeechSynthesisService";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService | ProviderSessionDirectory,
@@ -143,6 +145,12 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(executionTargetServiceLayer),
   );
   const portForwardLayer = PortForwardManagerLive.pipe(Layer.provide(executionTargetServiceLayer));
+  const realtimeTokenServiceLayer = RealtimeTokenServiceLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
+  const speechSynthesisServiceLayer = SpeechSynthesisServiceLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),
@@ -161,5 +169,7 @@ export function makeServerRuntimeServicesLayer() {
     executionTargetServiceLayer,
     executionTargetRuntimeLayer,
     ThreadNotesRepositoryLive,
+    realtimeTokenServiceLayer,
+    speechSynthesisServiceLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

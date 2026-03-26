@@ -17,6 +17,12 @@ export const MAX_CUSTOM_MODEL_LENGTH = 256;
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+export const VoicePlaybackRate = Schema.Literals(["0.75", "1.0", "1.25", "1.5", "1.75", "2.0"]);
+export type VoicePlaybackRate = typeof VoicePlaybackRate.Type;
+export const VoiceSilenceDuration = Schema.Literals(["1.5", "2.0", "2.5", "3.0", "4.0"]);
+export type VoiceSilenceDuration = typeof VoiceSilenceDuration.Type;
+export const DEFAULT_VOICE_INSTRUCTIONS =
+  "Speak in a motivating, friendly, natural tone. Keep delivery clear, conversational, and concise without sounding robotic.";
 type CustomModelSettingsKey = "customCodexModels" | "customClaudeModels";
 export type ProviderCustomModelConfig = {
   provider: ProviderKind;
@@ -52,6 +58,18 @@ export const AppSettingsSchema = Schema.Struct({
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
+  voiceEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
+  voiceWakePhraseEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
+  voiceLiveRepliesEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
+  voiceAutoSpeakReplies: Schema.Boolean.pipe(withDefaults(() => true)),
+  voiceHighlightSpokenSentence: Schema.Boolean.pipe(withDefaults(() => true)),
+  voiceModel: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
+  voiceName: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
+  voicePlaybackRate: VoicePlaybackRate.pipe(withDefaults(() => "1.5" as const)),
+  voiceSilenceDuration: VoiceSilenceDuration.pipe(withDefaults(() => "3.0" as const)),
+  voiceInstructions: Schema.String.check(Schema.isMaxLength(2048)).pipe(
+    withDefaults(() => DEFAULT_VOICE_INSTRUCTIONS),
+  ),
   timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),
   uiScale: Schema.Literals(["small", "medium", "large", "xl", "xxl"]).pipe(
     withDefaults(() => "medium" as const),

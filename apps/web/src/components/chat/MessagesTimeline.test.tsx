@@ -89,6 +89,14 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        activeSpokenMessageId={null}
+        activeSpokenSentence={null}
+        activeSpokenParagraph={null}
+        activeSpokenParagraphIndex={null}
+        pendingPlayMessageId={null}
+        pendingPlayParagraph={null}
+        pendingPlayParagraphIndex={null}
+        onPlayFromParagraph={() => {}}
       />,
     );
 
