@@ -17,6 +17,8 @@ import {
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
   useAppSettings,
+  type VoicePlaybackRate,
+  type VoiceSilenceDuration,
 } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -40,6 +42,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
 import { SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
 
@@ -83,6 +86,37 @@ const UI_SCALE_LABELS = {
   xl: "XL",
   xxl: "XXL",
 } as const;
+const OPENAI_VOICE_OPTIONS = [
+  { value: "", label: "Server default" },
+  { value: "alloy", label: "Alloy" },
+  { value: "ash", label: "Ash" },
+  { value: "ballad", label: "Ballad" },
+  { value: "cedar", label: "Cedar" },
+  { value: "coral", label: "Coral" },
+  { value: "echo", label: "Echo" },
+  { value: "fable", label: "Fable" },
+  { value: "marin", label: "Marin" },
+  { value: "nova", label: "Nova" },
+  { value: "onyx", label: "Onyx" },
+  { value: "sage", label: "Sage" },
+  { value: "shimmer", label: "Shimmer" },
+  { value: "verse", label: "Verse" },
+] as const;
+const VOICE_PLAYBACK_RATE_LABELS: Record<VoicePlaybackRate, string> = {
+  "0.75": "0.75x",
+  "1.0": "1.0x",
+  "1.25": "1.25x",
+  "1.5": "1.5x",
+  "1.75": "1.75x",
+  "2.0": "2.0x",
+};
+const VOICE_SILENCE_DURATION_LABELS: Record<VoiceSilenceDuration, string> = {
+  "1.5": "1.5s",
+  "2.0": "2.0s",
+  "2.5": "2.5s",
+  "3.0": "3.0s",
+  "4.0": "4.0s",
+};
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -292,6 +326,10 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
+  const openOpenAIPlatform = useCallback(() => {
+    const api = ensureNativeApi();
+    void api.shell.openExternal("https://platform.openai.com/usage").catch(() => undefined);
+  }, []);
   const startEditingExecutionTarget = useCallback((target: ExecutionTarget) => {
     if (target.connection.kind !== "ssh") {
       return;
@@ -1196,6 +1234,290 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Voice</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure realtime voice input and spoken assistant readback for this device.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Enable voice features</p>
+                    <p className="text-xs text-muted-foreground">
+                      Shows the mic and speaker controls in chat and allows voice sessions.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceEnabled}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceEnabled: Boolean(checked),
+                      })
+                    }
+                    aria-label="Enable voice features"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Speak assistant replies</p>
+                    <p className="text-xs text-muted-foreground">
+                      Read streamed Codex or Claude responses aloud as they arrive.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceAutoSpeakReplies}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceAutoSpeakReplies: Boolean(checked),
+                      })
+                    }
+                    aria-label="Speak assistant replies"
+                    disabled={!settings.voiceEnabled}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Highlight spoken sentence</p>
+                    <p className="text-xs text-muted-foreground">
+                      Show the current sentence being read back above the composer.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceHighlightSpokenSentence}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceHighlightSpokenSentence: Boolean(checked),
+                      })
+                    }
+                    aria-label="Highlight spoken sentence"
+                    disabled={!settings.voiceEnabled || !settings.voiceAutoSpeakReplies}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Wake phrase mode</p>
+                    <p className="text-xs text-muted-foreground">
+                      Lets the chat listen for “Hey T3” and start voice input without pressing the
+                      keyboard.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceWakePhraseEnabled}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceWakePhraseEnabled: Boolean(checked),
+                      })
+                    }
+                    aria-label="Enable Hey T3 wake phrase mode"
+                    disabled={!settings.voiceEnabled}
+                  />
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-foreground">Voice input model</p>
+                    <p className="text-xs text-muted-foreground">
+                      Optional override for the realtime voice-input model. Leave blank to use the
+                      server default.
+                    </p>
+                  </div>
+                  <Input
+                    value={settings.voiceModel}
+                    onChange={(event) =>
+                      updateSettings({
+                        voiceModel: event.target.value,
+                      })
+                    }
+                    placeholder="gpt-realtime"
+                    aria-label="Voice input model"
+                  />
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-foreground">Voice name</p>
+                    <p className="text-xs text-muted-foreground">
+                      Choose an OpenAI built-in voice for spoken readback. Realtime input falls back
+                      safely if a voice is not available on that endpoint.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.voiceName}
+                    onValueChange={(value) =>
+                      updateSettings({
+                        voiceName: value ?? "",
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-full" aria-label="Voice name">
+                      <SelectValue placeholder="Server default">
+                        {OPENAI_VOICE_OPTIONS.find((option) => option.value === settings.voiceName)
+                          ?.label ?? "Server default"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {OPENAI_VOICE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value || "default"} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Voice speed</p>
+                    <p className="text-xs text-muted-foreground">
+                      Adjust spoken assistant playback speed without changing the text generation.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.voicePlaybackRate}
+                    onValueChange={(value) => {
+                      if (
+                        value !== "0.75" &&
+                        value !== "1.0" &&
+                        value !== "1.25" &&
+                        value !== "1.5" &&
+                        value !== "1.75" &&
+                        value !== "2.0"
+                      ) {
+                        return;
+                      }
+                      updateSettings({
+                        voicePlaybackRate: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-28" aria-label="Voice speed">
+                      <SelectValue>
+                        {VOICE_PLAYBACK_RATE_LABELS[settings.voicePlaybackRate]}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end">
+                      <SelectItem value="0.75">{VOICE_PLAYBACK_RATE_LABELS["0.75"]}</SelectItem>
+                      <SelectItem value="1.0">{VOICE_PLAYBACK_RATE_LABELS["1.0"]}</SelectItem>
+                      <SelectItem value="1.25">{VOICE_PLAYBACK_RATE_LABELS["1.25"]}</SelectItem>
+                      <SelectItem value="1.5">{VOICE_PLAYBACK_RATE_LABELS["1.5"]}</SelectItem>
+                      <SelectItem value="1.75">{VOICE_PLAYBACK_RATE_LABELS["1.75"]}</SelectItem>
+                      <SelectItem value="2.0">{VOICE_PLAYBACK_RATE_LABELS["2.0"]}</SelectItem>
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Voice silence timeout</p>
+                    <p className="text-xs text-muted-foreground">
+                      How long T3 waits after you stop speaking before it ends listening and sends
+                      the transcript.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.voiceSilenceDuration}
+                    onValueChange={(value) => {
+                      if (
+                        value !== "1.5" &&
+                        value !== "2.0" &&
+                        value !== "2.5" &&
+                        value !== "3.0" &&
+                        value !== "4.0"
+                      ) {
+                        return;
+                      }
+                      updateSettings({
+                        voiceSilenceDuration: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-28" aria-label="Voice silence timeout">
+                      <SelectValue>
+                        {VOICE_SILENCE_DURATION_LABELS[settings.voiceSilenceDuration]}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end">
+                      <SelectItem value="1.5">{VOICE_SILENCE_DURATION_LABELS["1.5"]}</SelectItem>
+                      <SelectItem value="2.0">{VOICE_SILENCE_DURATION_LABELS["2.0"]}</SelectItem>
+                      <SelectItem value="2.5">{VOICE_SILENCE_DURATION_LABELS["2.5"]}</SelectItem>
+                      <SelectItem value="3.0">{VOICE_SILENCE_DURATION_LABELS["3.0"]}</SelectItem>
+                      <SelectItem value="4.0">{VOICE_SILENCE_DURATION_LABELS["4.0"]}</SelectItem>
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-foreground">Voice instructions</p>
+                    <p className="text-xs text-muted-foreground">
+                      Shape the tone and delivery used for spoken assistant readback.
+                    </p>
+                  </div>
+                  <Textarea
+                    value={settings.voiceInstructions}
+                    onChange={(event) =>
+                      updateSettings({
+                        voiceInstructions: event.target.value,
+                      })
+                    }
+                    rows={4}
+                    aria-label="Voice instructions"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">OpenAI usage</p>
+                    <p className="text-xs text-muted-foreground">
+                      Open the OpenAI usage page to check token and spend activity for voice
+                      traffic.
+                    </p>
+                  </div>
+                  <Button size="xs" variant="outline" onClick={openOpenAIPlatform}>
+                    Open usage
+                  </Button>
+                </div>
+
+                {settings.voiceEnabled !== defaults.voiceEnabled ||
+                settings.voiceWakePhraseEnabled !== defaults.voiceWakePhraseEnabled ||
+                settings.voiceAutoSpeakReplies !== defaults.voiceAutoSpeakReplies ||
+                settings.voiceHighlightSpokenSentence !== defaults.voiceHighlightSpokenSentence ||
+                settings.voiceModel !== defaults.voiceModel ||
+                settings.voiceName !== defaults.voiceName ||
+                settings.voicePlaybackRate !== defaults.voicePlaybackRate ||
+                settings.voiceSilenceDuration !== defaults.voiceSilenceDuration ||
+                settings.voiceInstructions !== defaults.voiceInstructions ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          voiceEnabled: defaults.voiceEnabled,
+                          voiceWakePhraseEnabled: defaults.voiceWakePhraseEnabled,
+                          voiceAutoSpeakReplies: defaults.voiceAutoSpeakReplies,
+                          voiceHighlightSpokenSentence: defaults.voiceHighlightSpokenSentence,
+                          voiceModel: defaults.voiceModel,
+                          voiceName: defaults.voiceName,
+                          voicePlaybackRate: defaults.voicePlaybackRate,
+                          voiceSilenceDuration: defaults.voiceSilenceDuration,
+                          voiceInstructions: defaults.voiceInstructions,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

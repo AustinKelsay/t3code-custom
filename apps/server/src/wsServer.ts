@@ -103,6 +103,8 @@ import { ExecutionTargetService } from "./executionTarget/Services/ExecutionTarg
 import { runTargetProcess } from "./executionTarget/targetProcess.ts";
 import { buildRemoteShellScript, shellQuote } from "./executionTarget/ssh.ts";
 import { ThreadNotesRepository } from "./persistence/Services/ThreadNotes.ts";
+import { RealtimeTokenService } from "./voice/Services/RealtimeTokenService.ts";
+import { SpeechSynthesisService } from "./voice/Services/SpeechSynthesisService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -284,7 +286,9 @@ export type ServerRuntimeServices =
   | Open
   | AnalyticsService
   | ExecutionTargetService
-  | ThreadNotesRepository;
+  | ThreadNotesRepository
+  | RealtimeTokenService
+  | SpeechSynthesisService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -328,6 +332,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const path = yield* Path.Path;
   const executionTargets = yield* ExecutionTargetService;
   const threadNotesRepository = yield* ThreadNotesRepository;
+  const realtimeTokenService = yield* RealtimeTokenService;
+  const speechSynthesisService = yield* SpeechSynthesisService;
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -1406,6 +1412,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.executionTargetCheckHealth: {
         const body = stripRequestTag(request.body);
         return yield* executionTargets.checkHealth(body);
+      }
+
+      case WS_METHODS.voiceRealtimeSessionCreate: {
+        const body = stripRequestTag(request.body);
+        return yield* realtimeTokenService.createClientSecret(body);
+      }
+
+      case WS_METHODS.voiceSpeechSynthesize: {
+        const body = stripRequestTag(request.body);
+        return yield* speechSynthesisService.synthesize(body);
       }
 
       default: {

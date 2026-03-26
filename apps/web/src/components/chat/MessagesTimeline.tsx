@@ -85,6 +85,19 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  activeSpokenMessageId: string | null;
+  activeSpokenSentence: string | null;
+  activeSpokenParagraph: string | null;
+  activeSpokenParagraphIndex: number | null;
+  pendingPlayMessageId: string | null;
+  pendingPlayParagraph: string | null;
+  pendingPlayParagraphIndex: number | null;
+  onPlayFromParagraph: (
+    messageId: MessageId,
+    fullText: string,
+    paragraphIndex: number,
+    paragraphText: string,
+  ) => void;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -109,6 +122,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  activeSpokenMessageId,
+  activeSpokenSentence,
+  activeSpokenParagraph,
+  activeSpokenParagraphIndex,
+  pendingPlayMessageId,
+  pendingPlayParagraph,
+  pendingPlayParagraphIndex,
+  onPlayFromParagraph,
 }: MessagesTimelineProps) {
   const { settings } = useAppSettings();
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -309,6 +330,47 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       [turnId]: !(current[turnId] ?? true),
     }));
   }, []);
+  const lastVoiceAutoscrollTargetRef = useRef<string | null>(null);
+  const lastVoiceAutoscrollMessageIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!scrollContainer || !activeSpokenMessageId || activeSpokenParagraphIndex === null) {
+      lastVoiceAutoscrollTargetRef.current = null;
+      return;
+    }
+
+    const targetKey = `${activeSpokenMessageId}:${activeSpokenParagraphIndex}`;
+    if (lastVoiceAutoscrollTargetRef.current === targetKey) {
+      return;
+    }
+
+    const scrollFrame = window.requestAnimationFrame(() => {
+      const escapedMessageId =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape(activeSpokenMessageId)
+          : activeSpokenMessageId;
+      const paragraphNode = scrollContainer.querySelector<HTMLElement>(
+        `[data-message-id="${escapedMessageId}"] [data-voice-paragraph-index="${activeSpokenParagraphIndex}"]`,
+      );
+      if (!paragraphNode) {
+        return;
+      }
+      const isInitialParagraphForMessage =
+        activeSpokenParagraphIndex === 0 ||
+        lastVoiceAutoscrollMessageIdRef.current !== activeSpokenMessageId;
+      paragraphNode.scrollIntoView({
+        block: isInitialParagraphForMessage ? "start" : "nearest",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+      lastVoiceAutoscrollTargetRef.current = targetKey;
+      lastVoiceAutoscrollMessageIdRef.current = activeSpokenMessageId;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(scrollFrame);
+    };
+  }, [activeSpokenMessageId, activeSpokenParagraphIndex, scrollContainer]);
 
   const renderRowContent = (row: TimelineRow) => (
     <div
@@ -469,6 +531,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  activeSentence={
+                    activeSpokenMessageId === row.message.id ? activeSpokenSentence : null
+                  }
+                  activeParagraph={
+                    activeSpokenMessageId === row.message.id ? activeSpokenParagraph : null
+                  }
+                  activeParagraphIndex={
+                    activeSpokenMessageId === row.message.id ? activeSpokenParagraphIndex : null
+                  }
+                  pendingPlayParagraph={
+                    pendingPlayMessageId === row.message.id ? pendingPlayParagraph : null
+                  }
+                  pendingPlayParagraphIndex={
+                    pendingPlayMessageId === row.message.id ? pendingPlayParagraphIndex : null
+                  }
+                  onPlayParagraph={(paragraphIndex, paragraphText) => {
+                    onPlayFromParagraph(row.message.id, messageText, paragraphIndex, paragraphText);
+                  }}
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);

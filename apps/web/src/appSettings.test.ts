@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppSettingsSchema,
+  DEFAULT_VOICE_INSTRUCTIONS,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   getCustomModelOptionsByProvider,
@@ -214,6 +215,12 @@ describe("AppSettingsSchema", () => {
       defaultThreadEnvMode: "local",
       confirmThreadDelete: false,
       enableAssistantStreaming: false,
+      voiceEnabled: true,
+      voiceAutoSpeakReplies: true,
+      voiceModel: "",
+      voiceName: "",
+      voicePlaybackRate: "1.5",
+      voiceInstructions: DEFAULT_VOICE_INSTRUCTIONS,
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
       customCodexModels: [],
       customClaudeModels: [],

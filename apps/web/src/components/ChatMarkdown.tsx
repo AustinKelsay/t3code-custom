@@ -1,5 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LoaderCircleIcon, PlayIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
@@ -8,6 +8,7 @@ import React, {
   useEffect,
   memo,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 import type { Components } from "react-markdown";
@@ -48,6 +49,12 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  activeSentence?: string | null;
+  activeParagraph?: string | null;
+  activeParagraphIndex?: number | null;
+  pendingPlayParagraph?: string | null;
+  pendingPlayParagraphIndex?: number | null;
+  onPlayParagraph?: (paragraphIndex: number, paragraphText: string) => void;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -86,6 +93,22 @@ function nodeToPlainText(node: ReactNode): string {
   return "";
 }
 
+function normalizeHighlightText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function extractLeadingSentence(text: string): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
+    .find((sentence) => sentence.length > 0);
+  return sentences ?? normalized;
+}
+
 function extractCodeBlock(
   children: ReactNode,
 ): { className: string | undefined; code: string } | null {
@@ -106,6 +129,64 @@ function extractCodeBlock(
     className: onlyChild.props.className,
     code: nodeToPlainText(onlyChild.props.children),
   };
+}
+
+function highlightSentenceInNode(
+  node: ReactNode,
+  activeSentence: string,
+  keyPrefix = "sentence-highlight",
+): ReactNode {
+  if (!activeSentence.trim()) {
+    return node;
+  }
+
+  if (typeof node === "string" || typeof node === "number") {
+    const value = String(node);
+    const matchIndex = value.indexOf(activeSentence);
+    if (matchIndex === -1) {
+      return node;
+    }
+    const before = value.slice(0, matchIndex);
+    const match = value.slice(matchIndex, matchIndex + activeSentence.length);
+    const after = value.slice(matchIndex + activeSentence.length);
+    return [
+      before,
+      <mark
+        key={`${keyPrefix}:mark:${matchIndex}`}
+        className="rounded-md bg-primary/14 px-1.5 py-0.5 text-foreground ring-1 ring-primary/18"
+      >
+        {match}
+      </mark>,
+      after,
+    ];
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((child, index) =>
+      highlightSentenceInNode(child, activeSentence, `${keyPrefix}:${index}`),
+    );
+  }
+
+  if (!isValidElement<{ children?: ReactNode }>(node)) {
+    return node;
+  }
+
+  if (typeof node.type === "string") {
+    const tagName = node.type.toLowerCase();
+    if (tagName === "code" || tagName === "pre" || tagName === "kbd" || tagName === "samp") {
+      return node;
+    }
+  }
+
+  const nextChildren = highlightSentenceInNode(
+    node.props.children,
+    activeSentence,
+    `${keyPrefix}:child`,
+  );
+  if (nextChildren === node.props.children) {
+    return node;
+  }
+  return React.createElement(node.type, { ...node.props }, nextChildren);
 }
 
 function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
@@ -212,15 +293,107 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({
+  text,
+  cwd,
+  isStreaming = false,
+  activeSentence = null,
+  activeParagraph = null,
+  activeParagraphIndex = null,
+  pendingPlayParagraph = null,
+  pendingPlayParagraphIndex = null,
+  onPlayParagraph,
+}: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  const markdownComponents = useMemo<Components>(
-    () => ({
+  const [optimisticPendingParagraph, setOptimisticPendingParagraph] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingPlayParagraph) {
+      setOptimisticPendingParagraph(pendingPlayParagraph);
+      return;
+    }
+    if (activeSentence?.trim()) {
+      setOptimisticPendingParagraph(null);
+    }
+  }, [activeSentence, pendingPlayParagraph]);
+
+  const markdownComponents = useMemo<Components>(() => {
+    let paragraphRenderIndex = 0;
+    const normalizedActiveSentence = normalizeHighlightText(activeSentence ?? "");
+    const normalizedActiveParagraph = normalizeHighlightText(activeParagraph ?? "");
+    const paragraphContainsActiveSentence = (children: ReactNode) => {
+      if (!normalizedActiveSentence) {
+        return false;
+      }
+      return normalizeHighlightText(nodeToPlainText(children)).includes(normalizedActiveSentence);
+    };
+    const paragraphMatchesActiveParagraph = (paragraphText: string) => {
+      if (!normalizedActiveParagraph) {
+        return false;
+      }
+      return normalizeHighlightText(paragraphText) === normalizedActiveParagraph;
+    };
+    const renderParagraphPlayButton = (paragraphIndex: number, paragraphText: string) => {
+      const normalizedParagraph = nodeToPlainText(paragraphText).trim();
+      if (!onPlayParagraph || normalizedParagraph.length === 0) {
+        return null;
+      }
+      const isPending =
+        pendingPlayParagraphIndex === paragraphIndex ||
+        (pendingPlayParagraphIndex === null && pendingPlayParagraph === normalizedParagraph);
+      const showPending =
+        optimisticPendingParagraph === normalizedParagraph ||
+        pendingPlayParagraphIndex === paragraphIndex ||
+        isPending;
+      return (
+        <button
+          type="button"
+          className={`relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border transition-opacity sm:size-5 ${
+            showPending
+              ? "border-primary/50 bg-primary/12 text-primary shadow-sm shadow-primary/15 opacity-100 ring-2 ring-primary/20"
+              : "border-border/55 bg-background/85 text-muted-foreground/70 hover:text-foreground sm:opacity-0 sm:group-hover/voice-paragraph:opacity-100"
+          }`}
+          onClick={() => {
+            setOptimisticPendingParagraph(normalizedParagraph);
+            onPlayParagraph(paragraphIndex, normalizedParagraph);
+          }}
+          aria-label="Play from this paragraph"
+          title={showPending ? "Loading paragraph playback" : "Play from this paragraph"}
+          aria-busy={showPending}
+          disabled={showPending}
+        >
+          {showPending ? (
+            <>
+              <span className="absolute inset-0 rounded-full animate-pulse bg-primary/10" />
+              <LoaderCircleIcon className="relative z-10 size-3 animate-spin" />
+            </>
+          ) : (
+            <PlayIcon className="size-3" />
+          )}
+        </button>
+      );
+    };
+    const renderHighlightedChildren = (
+      children: ReactNode,
+      keyPrefix: string,
+      fallbackSentence?: string | null,
+    ) => {
+      const sentenceToHighlight = activeSentence?.trim() || fallbackSentence?.trim() || "";
+      return sentenceToHighlight
+        ? highlightSentenceInNode(children, sentenceToHighlight, keyPrefix)
+        : children;
+    };
+
+    return {
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
-          return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          return (
+            <a {...props} href={href} target="_blank" rel="noreferrer">
+              {renderHighlightedChildren(props.children, "markdown-link")}
+            </a>
+          );
         }
 
         return (
@@ -237,8 +410,114 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
                 console.warn("Native API not found. Unable to open file in editor.");
               }
             }}
-          />
+          >
+            {renderHighlightedChildren(props.children, "markdown-link")}
+          </a>
         );
+      },
+      p({ node: _node, children, ...props }) {
+        const paragraphIndex = paragraphRenderIndex;
+        paragraphRenderIndex += 1;
+        const normalizedParagraph = nodeToPlainText(children).trim();
+        const isPendingParagraph =
+          pendingPlayParagraphIndex === paragraphIndex ||
+          pendingPlayParagraph === normalizedParagraph ||
+          optimisticPendingParagraph === normalizedParagraph;
+        const isActiveParagraph =
+          activeParagraphIndex === paragraphIndex ||
+          paragraphMatchesActiveParagraph(normalizedParagraph) ||
+          paragraphContainsActiveSentence(children);
+        const pendingSentence = isPendingParagraph
+          ? extractLeadingSentence(normalizedParagraph)
+          : null;
+        return (
+          <div
+            className="group/voice-paragraph flex items-start gap-2"
+            data-voice-paragraph-index={paragraphIndex}
+            data-voice-paragraph-active={isActiveParagraph ? "true" : undefined}
+          >
+            <div className="w-6 shrink-0 pt-1 sm:w-5">
+              {renderParagraphPlayButton(paragraphIndex, normalizedParagraph)}
+            </div>
+            <p
+              {...props}
+              className={`min-w-0 flex-1 rounded-lg px-2 py-1 transition-colors ${
+                isPendingParagraph
+                  ? "animate-pulse border border-primary/25 bg-primary/8 ring-1 ring-primary/18"
+                  : isActiveParagraph
+                    ? "bg-primary/8 ring-1 ring-primary/12"
+                    : ""
+              }`}
+            >
+              {renderHighlightedChildren(children, "markdown-paragraph", pendingSentence)}
+            </p>
+          </div>
+        );
+      },
+      li({ node: _node, children, ...props }) {
+        const paragraphIndex = paragraphRenderIndex;
+        paragraphRenderIndex += 1;
+        const normalizedParagraph = nodeToPlainText(children).trim();
+        const isPendingParagraph =
+          pendingPlayParagraphIndex === paragraphIndex ||
+          pendingPlayParagraph === normalizedParagraph ||
+          optimisticPendingParagraph === normalizedParagraph;
+        const isActiveParagraph =
+          activeParagraphIndex === paragraphIndex ||
+          paragraphMatchesActiveParagraph(normalizedParagraph) ||
+          paragraphContainsActiveSentence(children);
+        const pendingSentence = isPendingParagraph
+          ? extractLeadingSentence(normalizedParagraph)
+          : null;
+        return (
+          <li {...props}>
+            <div
+              className="group/voice-paragraph flex items-start gap-2"
+              data-voice-paragraph-index={paragraphIndex}
+              data-voice-paragraph-active={isActiveParagraph ? "true" : undefined}
+            >
+              <div className="w-6 shrink-0 pt-1 sm:w-5">
+                {renderParagraphPlayButton(paragraphIndex, normalizedParagraph)}
+              </div>
+              <div
+                className={`min-w-0 flex-1 rounded-lg px-2 py-1 transition-colors ${
+                  isPendingParagraph
+                    ? "animate-pulse border border-primary/25 bg-primary/8 ring-1 ring-primary/18"
+                    : isActiveParagraph
+                      ? "bg-primary/8 ring-1 ring-primary/12"
+                      : ""
+                }`}
+              >
+                {renderHighlightedChildren(children, "markdown-list-item", pendingSentence)}
+              </div>
+            </div>
+          </li>
+        );
+      },
+      blockquote({ node: _node, children, ...props }) {
+        return (
+          <blockquote {...props}>
+            {renderHighlightedChildren(children, "markdown-blockquote")}
+          </blockquote>
+        );
+      },
+      h1({ node: _node, children, ...props }) {
+        return <h1 {...props}>{renderHighlightedChildren(children, "markdown-heading-1")}</h1>;
+      },
+      h2({ node: _node, children, ...props }) {
+        return <h2 {...props}>{renderHighlightedChildren(children, "markdown-heading-2")}</h2>;
+      },
+      h3({ node: _node, children, ...props }) {
+        return <h3 {...props}>{renderHighlightedChildren(children, "markdown-heading-3")}</h3>;
+      },
+      h4({ node: _node, children, ...props }) {
+        return <h4 {...props}>{renderHighlightedChildren(children, "markdown-heading-4")}</h4>;
+      },
+      h5({ node: _node, children, ...props }) {
+        return <h5 {...props}>{renderHighlightedChildren(children, "markdown-heading-5")}</h5>;
+      },
+      h6({ node: _node, children, ...props }) {
+        return <h6 {...props}>{renderHighlightedChildren(children, "markdown-heading-6")}</h6>;
       },
       pre({ node: _node, children, ...props }) {
         const codeBlock = extractCodeBlock(children);
@@ -272,9 +551,20 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
           </MarkdownCodeBlock>
         );
       },
-    }),
-    [cwd, diffThemeName, isStreaming, resolvedTheme],
-  );
+    };
+  }, [
+    activeSentence,
+    activeParagraph,
+    activeParagraphIndex,
+    cwd,
+    diffThemeName,
+    isStreaming,
+    onPlayParagraph,
+    optimisticPendingParagraph,
+    pendingPlayParagraph,
+    pendingPlayParagraphIndex,
+    resolvedTheme,
+  ]);
 
   return (
     <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
