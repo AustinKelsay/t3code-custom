@@ -21,6 +21,27 @@ We are very very early in this project. Expect bugs.
 
 We are not accepting contributions yet.
 
+## Git conflict setup
+
+This repo includes a local Git setup command to reduce noisy merge conflicts, especially around `bun.lock`.
+
+```bash
+bun run git:setup-merge-tools
+```
+
+That command configures this checkout to:
+
+- use `diff3` conflict markers
+- enable `rerere`
+- treat `bun.lock` as generated and prefer the incoming version during merges
+- enable `mergiraf` for all files if it is installed on your `PATH`
+
+After resolving dependency manifest conflicts, regenerate the lockfile with:
+
+```bash
+bun run lockfile:refresh
+```
+
 ## If you REALLY want to contribute still.... read this first
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
