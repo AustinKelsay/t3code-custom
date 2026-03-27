@@ -302,6 +302,21 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
   message: Schema.String,
 }) {}
 
+function staticCacheHeaders(input: {
+  readonly requestPath: string;
+  readonly contentType: string;
+}): Record<string, string> {
+  if (input.contentType.startsWith("text/html")) {
+    return { "Cache-Control": "no-store" };
+  }
+
+  if (input.requestPath.startsWith("/assets/")) {
+    return { "Cache-Control": "public, max-age=31536000, immutable" };
+  }
+
+  return { "Cache-Control": "no-cache" };
+}
+
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
   ServerLifecycleError,
@@ -850,7 +865,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             respond(404, { "Content-Type": "text/plain" }, "Not Found");
             return;
           }
-          respond(200, { "Content-Type": "text/html; charset=utf-8" }, indexData);
+          respond(
+            200,
+            {
+              "Content-Type": "text/html; charset=utf-8",
+              ...staticCacheHeaders({
+                requestPath: url.pathname,
+                contentType: "text/html; charset=utf-8",
+              }),
+            },
+            indexData,
+          );
           return;
         }
 
@@ -862,7 +887,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
           return;
         }
-        respond(200, { "Content-Type": contentType }, data);
+        respond(
+          200,
+          {
+            "Content-Type": contentType,
+            ...staticCacheHeaders({ requestPath: url.pathname, contentType }),
+          },
+          data,
+        );
       }),
     ).catch(() => {
       if (!res.headersSent) {

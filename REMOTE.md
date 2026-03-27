@@ -53,13 +53,41 @@ Notes:
 If you use Tailscale, you can bind directly to your Tailnet address.
 
 ```bash
-TAILNET_IP="$(tailscale ip -4)"
-TOKEN="$(openssl rand -hex 24)"
-bun run --cwd apps/server start -- --host "$(tailscale ip -4)" --port 3773 --auth-token "$TOKEN" --no-browser
+bun run start:web:tailscale
 ```
 
 Open from any device in your tailnet:
 
-`http://<tailnet-ip>:3773`
+`http://<tailnet-ip>:3773/?token=<token>`
+
+The helper prints the exact phone URL after it builds `apps/web`, builds `apps/server`, and starts the server bound to your current Tailnet IP.
+
+For a stable personal host, the recommended environment is:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+export T3CODE_PORT=3773
+export T3CODE_AUTH_TOKEN="<long-random-token>"
+export T3CODE_HOME="$HOME/.t3"
+bun run start:web:tailscale
+```
+
+Operational note:
+
+- do not run the Electron desktop app at the same time as the remote web session unless you intentionally want both processes touching the same `T3CODE_HOME`
+
+If you prefer to run it manually:
+
+```bash
+TAILNET_IP="$(tailscale ip -4)"
+TOKEN="$(openssl rand -hex 24)"
+bun run --cwd apps/web build
+bun run --cwd apps/server build
+bun run --cwd apps/server start -- --host "$TAILNET_IP" --port 3773 --auth-token "$TOKEN" --no-browser
+```
+
+Then open:
+
+`http://<tailnet-ip>:3773/?token=<token>`
 
 You can also bind `--host 0.0.0.0` and connect through the Tailnet IP, but binding directly to the Tailnet IP limits exposure.

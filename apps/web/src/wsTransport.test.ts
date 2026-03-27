@@ -16,9 +16,11 @@ class MockWebSocket {
 
   readyState = MockWebSocket.CONNECTING;
   readonly sent: string[] = [];
+  readonly url: string;
   private readonly listeners = new Map<WsEventType, Set<WsListener>>();
 
-  constructor(_url: string) {
+  constructor(url: string) {
+    this.url = url;
     sockets.push(this);
   }
 
@@ -71,7 +73,18 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      location: { hostname: "localhost", port: "3020" },
+      location: {
+        protocol: "http:",
+        hostname: "localhost",
+        port: "3020",
+        host: "localhost:3020",
+        origin: "http://localhost:3020",
+        href: "http://localhost:3020/",
+      },
+      sessionStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+      },
       desktopBridge: undefined,
     },
   });
@@ -205,5 +218,94 @@ describe("WsTransport", () => {
 
     await expect(requestPromise).resolves.toEqual({ projects: [] });
     transport.dispose();
+  });
+
+  it("inherits the page token for websocket auth when the base url has no token", () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          protocol: "http:",
+          hostname: "100.93.167.23",
+          port: "3773",
+          host: "100.93.167.23:3773",
+          origin: "http://100.93.167.23:3773",
+          href: "http://100.93.167.23:3773/?token=remote-secret",
+        },
+        sessionStorage: {
+          getItem: vi.fn(() => null),
+          setItem: vi.fn(),
+        },
+        desktopBridge: undefined,
+      },
+    });
+
+    const transport = new WsTransport();
+
+    expect(getSocket().url).toBe("ws://100.93.167.23:3773/?token=remote-secret");
+
+    transport.dispose();
+  });
+
+  it("reuses the session token when the current route no longer has the query string", () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          protocol: "http:",
+          hostname: "100.93.167.23",
+          port: "3773",
+          host: "100.93.167.23:3773",
+          origin: "http://100.93.167.23:3773",
+          href: "http://100.93.167.23:3773/e845008c-cbfc-4e30-8dff-f80eefbc8fde",
+        },
+        sessionStorage: {
+          getItem: vi.fn(() => "remote-secret"),
+          setItem: vi.fn(),
+        },
+        desktopBridge: undefined,
+      },
+    });
+
+    const transport = new WsTransport();
+
+    expect(getSocket().url).toBe("ws://100.93.167.23:3773/?token=remote-secret");
+
+    transport.dispose();
+  });
+
+  it("restores the token into the current url before socket setup when session state has it", async () => {
+    const replaceState = vi.fn();
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          protocol: "http:",
+          hostname: "100.93.167.23",
+          port: "3773",
+          host: "100.93.167.23:3773",
+          origin: "http://100.93.167.23:3773",
+          href: "http://100.93.167.23:3773/e845008c-cbfc-4e30-8dff-f80eefbc8fde",
+        },
+        history: {
+          state: null,
+          replaceState,
+        },
+        sessionStorage: {
+          getItem: vi.fn(() => "remote-secret"),
+          setItem: vi.fn(),
+        },
+        desktopBridge: undefined,
+      },
+    });
+
+    const { ensureRemoteAuthTokenInUrl } = await import("./lib/serverUrl");
+    ensureRemoteAuthTokenInUrl();
+
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      "",
+      "http://100.93.167.23:3773/e845008c-cbfc-4e30-8dff-f80eefbc8fde?token=remote-secret",
+    );
   });
 });

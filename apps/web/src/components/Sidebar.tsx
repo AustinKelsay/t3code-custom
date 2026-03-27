@@ -90,6 +90,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveThreadTargetId } from "../threadTarget";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { resolveServerHttpOrigin } from "../lib/serverUrl";
 import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -191,21 +192,7 @@ function T3Wordmark() {
  * sources WsTransport uses, converting ws(s) to http(s).
  */
 function getServerHttpOrigin(): string {
-  const bridgeUrl = window.desktopBridge?.getWsUrl();
-  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsUrl =
-    bridgeUrl && bridgeUrl.length > 0
-      ? bridgeUrl
-      : envUrl && envUrl.length > 0
-        ? envUrl
-        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
-  // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
-  const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-  try {
-    return new URL(httpUrl).origin;
-  } catch {
-    return httpUrl;
-  }
+  return resolveServerHttpOrigin();
 }
 
 const serverHttpOrigin = getServerHttpOrigin();

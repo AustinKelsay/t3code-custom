@@ -116,6 +116,64 @@ Right now this fork should be treated as:
 - a controlled layer for local customization
 - a living record of why this repo intentionally differs from its parent sources
 
+## Local Remote Access Workflow
+
+For this fork, remote phone access should use the browser/server path over Tailscale, not the Electron desktop app.
+
+The repeatable local command is:
+
+```bash
+bun run start:web:tailscale
+```
+
+That command is the preferred workflow because it does the exact sequence this fork needs:
+
+1. builds `apps/web`
+2. builds `apps/server`
+3. binds the server to the current Tailscale IPv4 address
+4. generates or uses `T3CODE_AUTH_TOKEN`
+5. prints the exact phone URL as `http://<tailnet-ip>:3773/?token=<token>`
+
+Operational rules for this fork:
+
+- use the printed browser URL from your phone while connected to the same Tailnet
+- keep the terminal open while the remote session is active
+- do not use Electron as the remote access target
+- if you need a fixed token or port, set `T3CODE_AUTH_TOKEN` and/or `T3CODE_PORT` before running the command
+- if `bun` is missing from `PATH`, run `export PATH="$HOME/.bun/bin:$PATH"` first
+
+## Current Tested Setup
+
+The setup that is currently known-good for this fork is:
+
+- web mode only for remote access
+- Tailscale for network access
+- a fixed URL shape of `http://<tailnet-ip>:<port>/?token=<token>`
+- server state rooted at `T3CODE_HOME`, which defaults to `~/.t3`
+- the desktop app kept closed while the remote web session is active
+
+The exact repeatable host recipe is:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+export T3CODE_PORT=3773
+export T3CODE_AUTH_TOKEN="<long-random-token>"
+export T3CODE_HOME="$HOME/.t3"
+bun run start:web:tailscale
+```
+
+This fork now relies on three implementation details for that flow:
+
+- the launcher script builds `apps/web` first and `apps/server` second before starting the server
+- the browser client preserves the remote `token` query parameter across navigation and reloads
+- the server serves `index.html` with `Cache-Control: no-store` so mobile Safari does not get stuck on a stale shell
+
+If the phone view looks wrong, the expected recovery step is:
+
+1. close the old Safari tab
+2. open a fresh tab or private tab with the full `?token=...` URL
+3. tap the mobile sidebar toggle to see existing projects and threads
+
 ## How To Use This Doc Going Forward
 
 Update this file when:

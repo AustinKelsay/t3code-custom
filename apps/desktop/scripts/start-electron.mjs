@@ -7,7 +7,7 @@ delete childEnv.ELECTRON_RUN_AS_NODE;
 
 const electron = resolveElectronSpawnSpec("dist-electron/main.js");
 const child = spawn(electron.command, electron.args, {
-  stdio: "inherit",
+  stdio: "ignore",
   cwd: desktopDir,
   env: childEnv,
 });
