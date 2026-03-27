@@ -14,6 +14,8 @@ import {
   normalizeCustomModelSlugs,
   patchCustomModels,
   resolveAppModelSelection,
+  resolveVoicePlaybackRateValue,
+  resolveVoiceSilenceDurationMs,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -225,5 +227,19 @@ describe("AppSettingsSchema", () => {
       customCodexModels: [],
       customClaudeModels: [],
     });
+  });
+});
+
+describe("voice numeric settings", () => {
+  it("falls back to safe defaults when persisted voice values are invalid", () => {
+    expect(resolveVoicePlaybackRateValue("not-a-number")).toBe(1.5);
+    expect(resolveVoicePlaybackRateValue("")).toBe(1.5);
+    expect(resolveVoiceSilenceDurationMs("not-a-number")).toBe(3000);
+    expect(resolveVoiceSilenceDurationMs("")).toBe(3000);
+  });
+
+  it("preserves valid persisted voice values", () => {
+    expect(resolveVoicePlaybackRateValue("1.75")).toBe(1.75);
+    expect(resolveVoiceSilenceDurationMs("2.5")).toBe(2500);
   });
 });

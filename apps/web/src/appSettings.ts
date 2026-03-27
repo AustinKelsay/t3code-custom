@@ -23,6 +23,8 @@ export const VoiceSilenceDuration = Schema.Literals(["1.5", "2.0", "2.5", "3.0",
 export type VoiceSilenceDuration = typeof VoiceSilenceDuration.Type;
 export const DEFAULT_VOICE_INSTRUCTIONS =
   "Speak in a motivating, friendly, natural tone. Keep delivery clear, conversational, and concise without sounding robotic.";
+export const DEFAULT_VOICE_PLAYBACK_RATE_VALUE = 1.5;
+export const DEFAULT_VOICE_SILENCE_DURATION_MS = 3000;
 type CustomModelSettingsKey = "customCodexModels" | "customClaudeModels";
 export type ProviderCustomModelConfig = {
   provider: ProviderKind;
@@ -240,6 +242,22 @@ export function getCustomModelOptionsByProvider(
     codex: getAppModelOptions("codex", customModelsByProvider.codex),
     claudeAgent: getAppModelOptions("claudeAgent", customModelsByProvider.claudeAgent),
   };
+}
+
+export function resolveVoicePlaybackRateValue(value: string | null | undefined): number {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_VOICE_PLAYBACK_RATE_VALUE;
+  }
+  return parsedValue;
+}
+
+export function resolveVoiceSilenceDurationMs(value: string | null | undefined): number {
+  const parsedValue = Math.round(Number(value) * 1000);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_VOICE_SILENCE_DURATION_MS;
+  }
+  return parsedValue;
 }
 
 export function useAppSettings() {

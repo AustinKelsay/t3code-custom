@@ -125,6 +125,7 @@ import {
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   resolveAppModelSelection,
+  resolveVoiceSilenceDurationMs,
   type VoicePlaybackRate,
   useAppSettings,
 } from "../appSettings";
@@ -3273,7 +3274,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     liveRepliesEnabled: false,
     model: settings.voiceModel.trim() || null,
     voice: settings.voiceName.trim() || null,
-    silenceDurationMs: Math.round(Number(settings.voiceSilenceDuration) * 1000),
+    silenceDurationMs: resolveVoiceSilenceDurationMs(settings.voiceSilenceDuration),
     onFinalTranscript: onVoiceFinalTranscript,
   });
 

@@ -2,6 +2,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession } from "@openai/agents/realtime";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
+import { DEFAULT_VOICE_SILENCE_DURATION_MS } from "../appSettings";
 import { ensureNativeApi } from "../nativeApi";
 import { useVoiceActivityMonitor } from "./useVoiceActivityMonitor";
 import { useVoiceCuePlayer } from "./useVoiceCuePlayer";
@@ -32,6 +33,10 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
     silenceDurationMs = 3000,
     onFinalTranscript,
   } = input;
+  const resolvedSilenceDurationMs =
+    Number.isFinite(silenceDurationMs) && silenceDurationMs > 0
+      ? Math.round(silenceDurationMs)
+      : DEFAULT_VOICE_SILENCE_DURATION_MS;
   const [state, dispatch] = useReducer(voiceReducer, DEFAULT_VOICE_UI_STATE);
   const sessionRef = useRef<RealtimeSession | null>(null);
   const finalizedItemIdsRef = useRef(new Set<string>());
@@ -381,7 +386,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
                 createResponse: liveRepliesEnabled,
                 interruptResponse: true,
                 prefixPaddingMs: 300,
-                silenceDurationMs,
+                silenceDurationMs: resolvedSilenceDurationMs,
                 threshold: 0.5,
               },
             },
@@ -523,7 +528,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
     model,
     releaseAudioElement,
     releaseMediaStream,
-    silenceDurationMs,
+    resolvedSilenceDurationMs,
     threadId,
     voice,
     setSessionMuted,
@@ -570,7 +575,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
         playListeningStartCue();
         if (!keepHotMicRef.current && mediaStream) {
           void startVoiceActivityMonitoring(mediaStream, {
-            silenceDurationMs,
+            silenceDurationMs: resolvedSilenceDurationMs,
             onSustainedSilence: scheduleSilenceFallback,
           });
         }
@@ -584,7 +589,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
       ensureMicrophoneAccess,
       playListeningStartCue,
       scheduleSilenceFallback,
-      silenceDurationMs,
+      resolvedSilenceDurationMs,
       startVoiceActivityMonitoring,
       setSessionMuted,
     ],

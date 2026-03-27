@@ -126,6 +126,8 @@ The repeatable local command is:
 bun run start:web:tailscale
 ```
 
+That launcher now automatically loads a local ignored `.env.local` file from the repo root before it builds or starts anything.
+
 That command is the preferred workflow because it does the exact sequence this fork needs:
 
 1. builds `apps/web`
@@ -139,7 +141,7 @@ Operational rules for this fork:
 - use the printed browser URL from your phone while connected to the same Tailnet
 - keep the terminal open while the remote session is active
 - do not use Electron as the remote access target
-- if you need a fixed token or port, set `T3CODE_AUTH_TOKEN` and/or `T3CODE_PORT` before running the command
+- if you need persistent local config, put it in `.env.local` at the repo root
 - if `bun` is missing from `PATH`, run `export PATH="$HOME/.bun/bin:$PATH"` first
 
 ## Current Tested Setup
@@ -155,16 +157,27 @@ The setup that is currently known-good for this fork is:
 The exact repeatable host recipe is:
 
 ```bash
+.env.local
+
+# local only, gitignored
+T3CODE_PORT=3773
+T3CODE_AUTH_TOKEN="<long-random-token>"
+T3CODE_HOME="/absolute/path/to/.t3"
+OPENAI_API_KEY="<openai-api-key>"
+T3CODE_VOICE_MODEL="gpt-realtime"
+T3CODE_TTS_MODEL="gpt-4o-mini-tts"
+T3CODE_VOICE_NAME="alloy"
+```
+
+```bash
 export PATH="$HOME/.bun/bin:$PATH"
-export T3CODE_PORT=3773
-export T3CODE_AUTH_TOKEN="<long-random-token>"
-export T3CODE_HOME="$HOME/.t3"
 bun run start:web:tailscale
 ```
 
 This fork now relies on three implementation details for that flow:
 
 - the launcher script builds `apps/web` first and `apps/server` second before starting the server
+- the launcher script loads `.env.local` without requiring shell exports first
 - the browser client preserves the remote `token` query parameter across navigation and reloads
 - the server serves `index.html` with `Cache-Control: no-store` so mobile Safari does not get stuck on a stale shell
 

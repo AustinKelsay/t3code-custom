@@ -65,12 +65,24 @@ The helper prints the exact phone URL after it builds `apps/web`, builds `apps/s
 For a stable personal host, the recommended environment is:
 
 ```bash
+.env.local
+
+# local only, gitignored
+T3CODE_PORT=3773
+T3CODE_AUTH_TOKEN="<long-random-token>"
+T3CODE_HOME="/absolute/path/to/.t3"
+OPENAI_API_KEY="<openai-api-key>"
+T3CODE_VOICE_MODEL="gpt-realtime"
+T3CODE_TTS_MODEL="gpt-4o-mini-tts"
+T3CODE_VOICE_NAME="alloy"
+```
+
+```bash
 export PATH="$HOME/.bun/bin:$PATH"
-export T3CODE_PORT=3773
-export T3CODE_AUTH_TOKEN="<long-random-token>"
-export T3CODE_HOME="$HOME/.t3"
 bun run start:web:tailscale
 ```
+
+`bun run start:web:tailscale` now loads `.env.local` automatically before building or starting the server.
 
 Operational note:
 

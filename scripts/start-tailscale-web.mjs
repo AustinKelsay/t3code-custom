@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
+import { loadLocalEnv } from "./load-local-env.mjs";
+
 function fail(message) {
   console.error(`[start:web:tailscale] ${message}`);
   process.exit(1);
@@ -30,6 +32,11 @@ if (!bunPath) {
 const tailscalePath = resolveCommandPath("tailscale");
 if (!tailscalePath) {
   fail("tailscale CLI was not found on PATH");
+}
+
+const loadedEnvFiles = loadLocalEnv();
+for (const loadedEnvFile of loadedEnvFiles) {
+  console.log(`[start:web:tailscale] loaded env from ${loadedEnvFile}`);
 }
 
 function runStep(label, args) {

@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-import { useAppSettings } from "~/appSettings";
+import { resolveVoicePlaybackRateValue, useAppSettings } from "~/appSettings";
 import {
   extractAssistantNarrationParagraphs,
   extractAssistantNarrationSentences,
@@ -165,7 +165,7 @@ export function ThreadVoiceReadbackProvider(props: {
     model: settings.voiceModel.trim() || null,
     voice: settings.voiceName.trim() || null,
     instructions: settings.voiceInstructions.trim() || null,
-    playbackRate: Number(settings.voicePlaybackRate),
+    playbackRate: resolveVoicePlaybackRateValue(settings.voicePlaybackRate),
     onUtteranceStart: () => listeningCallbacksRef.current?.pauseListening(),
     onUtteranceEnd: () => listeningCallbacksRef.current?.resumeListening(),
     onPlaybackProgress: ({ text }) => {

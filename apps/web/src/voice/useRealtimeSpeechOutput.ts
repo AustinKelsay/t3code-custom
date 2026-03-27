@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 
+import { DEFAULT_VOICE_PLAYBACK_RATE_VALUE } from "../appSettings";
 import { ensureNativeApi } from "../nativeApi";
 import type { ThreadId } from "@t3tools/contracts";
 
@@ -116,7 +117,10 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     if (!audioElement) {
       return;
     }
-    const nextRate = playbackRateRef.current;
+    const nextRate =
+      Number.isFinite(playbackRateRef.current) && playbackRateRef.current > 0
+        ? playbackRateRef.current
+        : DEFAULT_VOICE_PLAYBACK_RATE_VALUE;
     audioElement.defaultPlaybackRate = nextRate;
     audioElement.playbackRate = nextRate;
   }, []);
