@@ -89,6 +89,7 @@ interface MessagesTimelineProps {
   activeSpokenSentence: string | null;
   activeSpokenParagraph: string | null;
   activeSpokenParagraphIndex: number | null;
+  isSpeakingPaused: boolean;
   pendingPlayMessageId: string | null;
   pendingPlayParagraph: string | null;
   pendingPlayParagraphIndex: number | null;
@@ -126,6 +127,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeSpokenSentence,
   activeSpokenParagraph,
   activeSpokenParagraphIndex,
+  isSpeakingPaused,
   pendingPlayMessageId,
   pendingPlayParagraph,
   pendingPlayParagraphIndex,
@@ -540,6 +542,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   activeParagraphIndex={
                     activeSpokenMessageId === row.message.id ? activeSpokenParagraphIndex : null
                   }
+                  isSpeakingPaused={isSpeakingPaused}
                   pendingPlayParagraph={
                     pendingPlayMessageId === row.message.id ? pendingPlayParagraph : null
                   }

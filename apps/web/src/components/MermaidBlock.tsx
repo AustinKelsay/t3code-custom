@@ -41,6 +41,7 @@ const MermaidBlock = memo(function MermaidBlock({
   const idRef = useRef(`mermaid-${randomUUID()}`);
   const previewRef = useRef<HTMLDivElement>(null);
   const fullscreenPreviewRef = useRef<HTMLDivElement>(null);
+  const fullscreenViewportRef = useRef<HTMLDivElement>(null);
   const bindFunctionsRef = useRef<((element: Element) => void) | undefined>(undefined);
   const panPointerRef = useRef<{
     id: number;
@@ -152,6 +153,23 @@ const MermaidBlock = memo(function MermaidBlock({
 
     bindFunctionsRef.current?.(fullscreenPreviewRef.current);
   }, [fullscreenOpen, renderedSvg]);
+
+  useEffect(() => {
+    const viewport = fullscreenViewportRef.current;
+    if (!fullscreenOpen || !viewport) {
+      return;
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      updateZoomLevel(zoomLevel + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+    };
+
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      viewport.removeEventListener("wheel", onWheel);
+    };
+  }, [fullscreenOpen, zoomLevel]);
 
   const updateZoomLevel = (nextValue: number) => {
     const clamped = clampZoom(nextValue);
@@ -315,6 +333,7 @@ const MermaidBlock = memo(function MermaidBlock({
             </div>
 
             <div
+              ref={fullscreenViewportRef}
               className="chat-markdown-mermaid-fullscreen-viewport"
               onDoubleClick={resetFullscreenView}
               onPointerDown={(event) => {
@@ -352,10 +371,6 @@ const MermaidBlock = memo(function MermaidBlock({
                 if (panPointerRef.current?.id === event.pointerId) {
                   panPointerRef.current = null;
                 }
-              }}
-              onWheel={(event) => {
-                event.preventDefault();
-                updateZoomLevel(zoomLevel + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
               }}
             >
               {renderedSvg ? (

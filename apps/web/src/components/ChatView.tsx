@@ -3231,6 +3231,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeSpokenSentence,
     activeSpokenParagraph,
     activeSpokenParagraphIndex,
+    isSpeakingPaused,
     pendingPlayMessageId,
     pendingPlayParagraph,
     pendingPlayParagraphIndex,
@@ -3245,6 +3246,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onVoiceFinalTranscript = useCallback(
     async (text: string) => {
       const normalized = text.trim();
+      console.log("[voice] chat.onVoiceFinalTranscript", {
+        threadId,
+        transcriptLength: normalized.length,
+      });
       if (!normalized) {
         return;
       }
@@ -3254,6 +3259,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerCursor(collapseExpandedComposerCursor(normalized, normalized.length));
       setComposerTrigger(detectComposerTrigger(normalized, normalized.length));
       const ready = await waitForVoiceSendReady();
+      console.log("[voice] chat.waitForVoiceSendReady.result", {
+        threadId,
+        ready,
+        transcriptLength: normalized.length,
+      });
       if (!ready) {
         toastManager.add({
           type: "error",
@@ -3262,9 +3272,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
         return;
       }
+      console.log("[voice] chat.sendPromptOverride", {
+        threadId,
+        transcriptLength: normalized.length,
+      });
       await onSendRef.current(undefined, { promptOverride: normalized });
     },
-    [setPrompt, stopSpeaking, waitForVoiceSendReady],
+    [setPrompt, stopSpeaking, threadId, waitForVoiceSendReady],
   );
 
   const voiceSession = useVoiceSession({
@@ -3274,6 +3288,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     liveRepliesEnabled: false,
     model: settings.voiceModel.trim() || null,
     voice: settings.voiceName.trim() || null,
+    microphoneDeviceId: settings.voiceInputDeviceId.trim() || null,
     silenceDurationMs: resolveVoiceSilenceDurationMs(settings.voiceSilenceDuration),
     onFinalTranscript: onVoiceFinalTranscript,
   });
@@ -3913,6 +3928,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 activeSpokenParagraphIndex={
                   settings.voiceHighlightSpokenSentence ? activeSpokenParagraphIndex : null
                 }
+                isSpeakingPaused={isSpeakingPaused}
                 pendingPlayMessageId={pendingPlayMessageId}
                 pendingPlayParagraph={pendingPlayParagraph}
                 pendingPlayParagraphIndex={pendingPlayParagraphIndex}
@@ -4175,6 +4191,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         <VoiceControlsGroup
                           phase={voiceSession.phase}
                           permissionState={voiceSession.permissionState}
+                          activeMicrophoneLabel={voiceSession.activeMicrophoneLabel}
                           micDisabled={
                             isComposerApprovalState ||
                             pendingUserInputs.length > 0 ||

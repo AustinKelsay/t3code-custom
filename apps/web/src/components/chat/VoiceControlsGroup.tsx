@@ -7,6 +7,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 interface VoiceControlsGroupProps {
   readonly phase: "idle" | "connecting" | "ready" | "listening" | "processing" | "error";
   readonly permissionState: "unknown" | "prompt" | "granted" | "denied" | "unsupported";
+  readonly activeMicrophoneLabel?: string | null;
   readonly micDisabled: boolean;
   readonly wakePhraseEnabled: boolean;
   readonly wakePhraseSupported: boolean;
@@ -27,6 +28,7 @@ export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
   const {
     phase,
     permissionState,
+    activeMicrophoneLabel = null,
     micDisabled,
     wakePhraseEnabled,
     wakePhraseSupported,
@@ -52,6 +54,9 @@ export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
         : listening
           ? "Stop voice input"
           : "Start voice input";
+  const micTooltipLabel = activeMicrophoneLabel
+    ? `${micLabel} (${activeMicrophoneLabel})`
+    : micLabel;
   const micClassName = cn(
     "h-9 w-9 shrink-0 rounded-none border-0 shadow-none sm:h-6 sm:w-6",
     listening
@@ -76,14 +81,14 @@ export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
               type="button"
               onClick={listening ? onStop : onStart}
               disabled={micDisabled || phase === "connecting" || phase === "processing"}
-              title={micLabel}
-              aria-label={micLabel}
+              title={micTooltipLabel}
+              aria-label={micTooltipLabel}
             >
               {listening ? <SquareIcon /> : <MicIcon />}
             </Button>
           }
         />
-        <TooltipPopup side="bottom">{micLabel}</TooltipPopup>
+        <TooltipPopup side="bottom">{micTooltipLabel}</TooltipPopup>
       </Tooltip>
 
       <Tooltip>

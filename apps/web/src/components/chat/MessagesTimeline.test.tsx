@@ -93,6 +93,7 @@ describe("MessagesTimeline", () => {
         activeSpokenSentence={null}
         activeSpokenParagraph={null}
         activeSpokenParagraphIndex={null}
+        isSpeakingPaused={false}
         pendingPlayMessageId={null}
         pendingPlayParagraph={null}
         pendingPlayParagraphIndex={null}
