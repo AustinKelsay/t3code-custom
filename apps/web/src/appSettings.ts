@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Option, Schema } from "effect";
 import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
 import {
@@ -7,7 +7,8 @@ import {
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { useLocalStorage } from "./hooks/useLocalStorage";
+import { getLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { useIsMobile } from "./hooks/useMediaQuery";
 import { EnvMode } from "./components/BranchToolbar.logic";
 import { normalizeRealtimeVoiceName } from "./voice/realtimeVoice";
 
@@ -60,6 +61,7 @@ export const AppSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
+  voiceInputEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceWakePhraseEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceLiveRepliesEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceAutoSpeakReplies: Schema.Boolean.pipe(withDefaults(() => true)),
@@ -87,7 +89,20 @@ export interface AppModelOption {
   isCustom: boolean;
 }
 
-const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
+function getDefaultAppSettings(options?: { isMobile?: boolean }): AppSettings {
+  const defaults = AppSettingsSchema.makeUnsafe({});
+  if (!options?.isMobile) {
+    return defaults;
+  }
+
+  return {
+    ...defaults,
+    voiceInputEnabled: false,
+    voiceWakePhraseEnabled: false,
+  };
+}
+
+const DEFAULT_APP_SETTINGS = getDefaultAppSettings();
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
   codex: {
     provider: "codex",
@@ -246,6 +261,8 @@ export function getCustomModelOptionsByProvider(
 }
 
 export function useAppSettings() {
+  const isMobile = useIsMobile();
+  const platformDefaults = useMemo(() => getDefaultAppSettings({ isMobile }), [isMobile]);
   const [settings, setSettings] = useLocalStorage(
     APP_SETTINGS_STORAGE_KEY,
     DEFAULT_APP_SETTINGS,
@@ -260,13 +277,22 @@ export function useAppSettings() {
   );
 
   const resetSettings = useCallback(() => {
-    setSettings(DEFAULT_APP_SETTINGS);
-  }, [setSettings]);
+    setSettings(platformDefaults);
+  }, [platformDefaults, setSettings]);
+
+  useEffect(() => {
+    const persistedSettings = getLocalStorageItem(APP_SETTINGS_STORAGE_KEY, AppSettingsSchema);
+    if (persistedSettings !== null || !isMobile) {
+      return;
+    }
+
+    setSettings(platformDefaults);
+  }, [isMobile, platformDefaults, setSettings]);
 
   return {
     settings,
     updateSettings,
     resetSettings,
-    defaults: DEFAULT_APP_SETTINGS,
+    defaults: platformDefaults,
   } as const;
 }

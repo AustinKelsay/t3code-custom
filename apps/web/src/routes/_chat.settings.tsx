@@ -1234,9 +1234,9 @@ function SettingsRouteView() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                   <div>
-                    <p className="text-sm font-medium text-foreground">Enable voice features</p>
+                    <p className="text-sm font-medium text-foreground">Enable spoken replies</p>
                     <p className="text-xs text-muted-foreground">
-                      Shows the mic and speaker controls in chat and allows voice sessions.
+                      Shows speaker controls in chat and allows assistant readback.
                     </p>
                   </div>
                   <Switch
@@ -1247,6 +1247,25 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Enable voice features"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Enable microphone input</p>
+                    <p className="text-xs text-muted-foreground">
+                      Shows the mic and “Hey T3” controls in chat and allows in-app voice capture.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceInputEnabled}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceInputEnabled: Boolean(checked),
+                        ...(checked ? {} : { voiceWakePhraseEnabled: false }),
+                      })
+                    }
+                    aria-label="Enable microphone input"
                   />
                 </div>
 
@@ -1304,7 +1323,7 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Enable Hey T3 wake phrase mode"
-                    disabled={!settings.voiceEnabled}
+                    disabled={!settings.voiceInputEnabled}
                   />
                 </div>
 
@@ -1523,6 +1542,7 @@ function SettingsRouteView() {
                 </div>
 
                 {settings.voiceEnabled !== defaults.voiceEnabled ||
+                settings.voiceInputEnabled !== defaults.voiceInputEnabled ||
                 settings.voiceWakePhraseEnabled !== defaults.voiceWakePhraseEnabled ||
                 settings.voiceAutoSpeakReplies !== defaults.voiceAutoSpeakReplies ||
                 settings.voiceHighlightSpokenSentence !== defaults.voiceHighlightSpokenSentence ||
@@ -1539,6 +1559,7 @@ function SettingsRouteView() {
                       onClick={() =>
                         updateSettings({
                           voiceEnabled: defaults.voiceEnabled,
+                          voiceInputEnabled: defaults.voiceInputEnabled,
                           voiceWakePhraseEnabled: defaults.voiceWakePhraseEnabled,
                           voiceAutoSpeakReplies: defaults.voiceAutoSpeakReplies,
                           voiceHighlightSpokenSentence: defaults.voiceHighlightSpokenSentence,

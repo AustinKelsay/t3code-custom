@@ -216,6 +216,7 @@ describe("AppSettingsSchema", () => {
       confirmThreadDelete: false,
       enableAssistantStreaming: false,
       voiceEnabled: true,
+      voiceInputEnabled: true,
       voiceAutoSpeakReplies: true,
       voiceModel: "",
       voiceName: "",

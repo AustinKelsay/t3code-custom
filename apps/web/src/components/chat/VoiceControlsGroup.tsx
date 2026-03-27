@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface VoiceControlsGroupProps {
+  readonly voiceInputEnabled: boolean;
   readonly phase: "idle" | "connecting" | "ready" | "listening" | "processing" | "error";
   readonly permissionState: "unknown" | "prompt" | "granted" | "denied" | "unsupported";
   readonly activeMicrophoneLabel?: string | null;
@@ -26,6 +27,7 @@ interface VoiceControlsGroupProps {
 
 export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
   const {
+    voiceInputEnabled,
     phase,
     permissionState,
     activeMicrophoneLabel = null,
@@ -71,55 +73,59 @@ export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
 
   return (
     <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-input bg-popover shadow-xs/5 dark:bg-input/32">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              className={micClassName}
-              size="icon-sm"
-              type="button"
-              onClick={listening ? onStop : onStart}
-              disabled={micDisabled || phase === "connecting" || phase === "processing"}
-              title={micTooltipLabel}
-              aria-label={micTooltipLabel}
-            >
-              {listening ? <SquareIcon /> : <MicIcon />}
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">{micTooltipLabel}</TooltipPopup>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              className={cn(
-                utilityButtonClassName,
-                "border-l border-input text-foreground hover:bg-accent/50",
-                wakePhraseEnabled && "bg-accent text-accent-foreground hover:bg-accent/85",
-              )}
-              variant="ghost"
-              size="icon-sm"
-              onClick={onToggleWakePhrase}
-              aria-label={
-                wakePhraseEnabled ? "Disable Hey T3 wake mode" : "Enable Hey T3 wake mode"
+      {voiceInputEnabled ? (
+        <>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  className={micClassName}
+                  size="icon-sm"
+                  type="button"
+                  onClick={listening ? onStop : onStart}
+                  disabled={micDisabled || phase === "connecting" || phase === "processing"}
+                  title={micTooltipLabel}
+                  aria-label={micTooltipLabel}
+                >
+                  {listening ? <SquareIcon /> : <MicIcon />}
+                </Button>
               }
-              disabled={!wakePhraseSupported}
-            >
-              <AudioLinesIcon className="size-3" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">
-          {wakePhraseSupported
-            ? wakePhraseEnabled
-              ? "Disable Hey T3 wake mode"
-              : "Enable Hey T3 wake mode"
-            : "Wake phrase mode is not supported in this browser"}
-        </TooltipPopup>
-      </Tooltip>
+            />
+            <TooltipPopup side="bottom">{micTooltipLabel}</TooltipPopup>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  className={cn(
+                    utilityButtonClassName,
+                    "border-l border-input text-foreground hover:bg-accent/50",
+                    wakePhraseEnabled && "bg-accent text-accent-foreground hover:bg-accent/85",
+                  )}
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onToggleWakePhrase}
+                  aria-label={
+                    wakePhraseEnabled ? "Disable Hey T3 wake mode" : "Enable Hey T3 wake mode"
+                  }
+                  disabled={!wakePhraseSupported}
+                >
+                  <AudioLinesIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {wakePhraseSupported
+                ? wakePhraseEnabled
+                  ? "Disable Hey T3 wake mode"
+                  : "Enable Hey T3 wake mode"
+                : "Wake phrase mode is not supported in this browser"}
+            </TooltipPopup>
+          </Tooltip>
+        </>
+      ) : null}
 
       <Tooltip>
         <TooltipTrigger
@@ -173,7 +179,7 @@ export function VoiceControlsGroup(props: VoiceControlsGroupProps) {
             <Button
               className={cn(
                 utilityButtonClassName,
-                "hidden border-l border-input text-foreground hover:bg-accent/50 sm:inline-flex",
+                "border-l border-input text-foreground hover:bg-accent/50",
               )}
               variant="ghost"
               size="icon-sm"
