@@ -3283,7 +3283,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const voiceSession = useVoiceSession({
     threadId,
-    enabled: settings.voiceEnabled,
+    enabled: settings.voiceInputEnabled,
     wakePhraseEnabled: settings.voiceWakePhraseEnabled,
     liveRepliesEnabled: false,
     model: settings.voiceModel.trim() || null,
@@ -3320,7 +3320,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const wakePhraseDetector = useWakePhraseDetection({
     enabled:
-      settings.voiceEnabled &&
+      settings.voiceInputEnabled &&
       settings.voiceWakePhraseEnabled &&
       !(
         isComposerApprovalState ||
@@ -3367,7 +3367,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (isEditableEventTarget(event.target)) {
         return;
       }
-      if (!settings.voiceEnabled || voiceSession.phase === "connecting") {
+      if (!settings.voiceInputEnabled || voiceSession.phase === "connecting") {
         return;
       }
       event.preventDefault();
@@ -3410,7 +3410,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       window.removeEventListener("blur", stopPushToTalk);
     };
   }, [
-    settings.voiceEnabled,
+    settings.voiceInputEnabled,
     startPushToTalkVoiceConversation,
     stopPushToTalkVoiceConversation,
     voiceSession.phase,
@@ -4189,6 +4189,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         </Button>
 
                         <VoiceControlsGroup
+                          voiceInputEnabled={settings.voiceInputEnabled}
                           phase={voiceSession.phase}
                           permissionState={voiceSession.permissionState}
                           activeMicrophoneLabel={voiceSession.activeMicrophoneLabel}
@@ -4199,7 +4200,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             isConnecting ||
                             isSendBusy ||
                             phase === "running" ||
-                            !settings.voiceEnabled
+                            !settings.voiceInputEnabled
                           }
                           wakePhraseEnabled={settings.voiceWakePhraseEnabled}
                           wakePhraseSupported={wakePhraseDetector.isSupported}
