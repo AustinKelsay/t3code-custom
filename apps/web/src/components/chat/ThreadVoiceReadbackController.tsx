@@ -40,6 +40,7 @@ const EMPTY_MESSAGES: NonNullable<
 
 interface ThreadVoiceReadbackContextValue {
   readonly readbackOwner: ReadbackOwner;
+  readonly isSpeakingPaused: boolean;
   readonly activeSpokenMessageId: string | null;
   readonly activeSpokenSentence: string | null;
   readonly activeSpokenParagraph: string | null;
@@ -66,6 +67,7 @@ const NOOP = () => {};
 
 const ThreadVoiceReadbackContext = createContext<ThreadVoiceReadbackContextValue>({
   readbackOwner: null,
+  isSpeakingPaused: false,
   activeSpokenMessageId: null,
   activeSpokenSentence: null,
   activeSpokenParagraph: null,
@@ -103,7 +105,7 @@ export function ThreadVoiceReadbackProvider(props: {
   readonly children: React.ReactNode;
 }) {
   const { threadId, children } = props;
-  const { settings } = useAppSettings();
+  const { settings, updateSettings } = useAppSettings();
   const thread = useStore(
     (store) => store.threads.find((candidate) => candidate.id === threadId) ?? null,
   );
@@ -151,6 +153,7 @@ export function ThreadVoiceReadbackProvider(props: {
   }, []);
 
   const {
+    isPlaybackPaused,
     blockSpeaking,
     unblockSpeaking,
     pauseSpeaking,
@@ -239,6 +242,14 @@ export function ThreadVoiceReadbackProvider(props: {
     if (!assistantMessage || !settings.voiceAutoSpeakReplies) {
       return;
     }
+    const shouldHandOffPausedManualReadback =
+      readbackOwnerRef.current === "manual" &&
+      isPlaybackPaused &&
+      activeNarrationMessageIdRef.current !== assistantMessage.id;
+    if (shouldHandOffPausedManualReadback) {
+      suppressedAutoMessageIdRef.current = null;
+      stopSpeaking();
+    }
     if (
       suppressedAutoMessageIdRef.current &&
       suppressedAutoMessageIdRef.current !== assistantMessage.id
@@ -310,9 +321,11 @@ export function ThreadVoiceReadbackProvider(props: {
     latestNarratableAssistantMessageId,
     latestNarratableAssistantStreaming,
     latestNarratableAssistantText,
+    isPlaybackPaused,
     settings.voiceAutoSpeakReplies,
     readbackOwner,
     speakAssistantText,
+    stopSpeaking,
   ]);
 
   const playFromParagraph = useCallback(
@@ -329,6 +342,22 @@ export function ThreadVoiceReadbackProvider(props: {
       );
       if (sentences.length === 0) {
         return;
+      }
+      if (settings.voiceEnabled && !settings.voiceAutoSpeakReplies) {
+        updateSettings({
+          voiceAutoSpeakReplies: true,
+        });
+      }
+      const isCurrentParagraph =
+        activeSpokenMessageIdRef.current === messageId &&
+        activeSpokenParagraphIndex === startIndex &&
+        activeSpokenParagraph === normalizedParagraph;
+      if (isCurrentParagraph) {
+        if (isPlaybackPaused) {
+          resumeSpeaking();
+        } else if (pauseSpeaking()) {
+          return;
+        }
       }
       suppressedAutoMessageIdRef.current = latestNarratableAssistantMessageId;
       setReadbackOwner("manual");
@@ -347,7 +376,17 @@ export function ThreadVoiceReadbackProvider(props: {
       setActiveSpokenParagraphIndex(startIndex);
       await replaceSpeechQueue(sentences);
     },
-    [latestNarratableAssistantMessageId, replaceSpeechQueue],
+    [
+      activeSpokenParagraph,
+      activeSpokenParagraphIndex,
+      isPlaybackPaused,
+      latestNarratableAssistantMessageId,
+      pauseSpeaking,
+      replaceSpeechQueue,
+      resumeSpeaking,
+      settings,
+      updateSettings,
+    ],
   );
 
   const stopSpeakingWithOwnershipReset = useCallback(() => {
@@ -362,6 +401,7 @@ export function ThreadVoiceReadbackProvider(props: {
   const value = useMemo<ThreadVoiceReadbackContextValue>(
     () => ({
       readbackOwner,
+      isSpeakingPaused: isPlaybackPaused,
       activeSpokenMessageId,
       activeSpokenSentence,
       activeSpokenParagraph,
@@ -380,6 +420,7 @@ export function ThreadVoiceReadbackProvider(props: {
     }),
     [
       readbackOwner,
+      isPlaybackPaused,
       activeSpokenMessageId,
       activeSpokenSentence,
       activeSpokenParagraph,

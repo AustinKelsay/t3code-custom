@@ -1416,11 +1416,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.voiceRealtimeSessionCreate: {
         const body = stripRequestTag(request.body);
+        logger.info("voice realtime session requested", {
+          threadId: body.threadId,
+          model: body.model ?? null,
+          voice: body.voice ?? null,
+        });
         return yield* realtimeTokenService.createClientSecret(body);
       }
 
       case WS_METHODS.voiceSpeechSynthesize: {
         const body = stripRequestTag(request.body);
+        logger.info("voice speech synthesis requested", {
+          threadId: body.threadId,
+          model: body.model ?? null,
+          voice: body.voice ?? null,
+          textLength: body.text.length,
+        });
         return yield* speechSynthesisService.synthesize(body);
       }
 

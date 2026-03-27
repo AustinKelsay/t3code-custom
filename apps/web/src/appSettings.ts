@@ -9,6 +9,7 @@ import {
 } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { EnvMode } from "./components/BranchToolbar.logic";
+import { normalizeRealtimeVoiceName } from "./voice/realtimeVoice";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -65,6 +66,7 @@ export const AppSettingsSchema = Schema.Struct({
   voiceHighlightSpokenSentence: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceModel: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
   voiceName: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
+  voiceInputDeviceId: Schema.String.check(Schema.isMaxLength(512)).pipe(withDefaults(() => "")),
   voicePlaybackRate: VoicePlaybackRate.pipe(withDefaults(() => "1.5" as const)),
   voiceSilenceDuration: VoiceSilenceDuration.pipe(withDefaults(() => "3.0" as const)),
   voiceInstructions: Schema.String.check(Schema.isMaxLength(2048)).pipe(
@@ -140,6 +142,7 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    voiceName: normalizeRealtimeVoiceName(settings.voiceName) ?? "",
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
