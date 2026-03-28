@@ -101,6 +101,7 @@ export interface Thread {
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
   error: string | null;
+  archivedAt?: string | null;
   pinnedAt: string | null;
   sortOrder: number | null;
   createdAt: string;

@@ -85,6 +85,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        archivedAt: null,
         pinnedAt: null,
         sortOrder: 1,
         latestTurn: null,

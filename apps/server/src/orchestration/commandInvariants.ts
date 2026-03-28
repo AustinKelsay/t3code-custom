@@ -88,6 +88,23 @@ export function requireThread(input: {
   );
 }
 
+export function requireThreadArchived(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+  const thread = findThreadById(input.readModel, input.threadId);
+  if (thread && thread.archivedAt !== null) {
+    return Effect.succeed(thread);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Thread '${input.threadId}' is not archived for command '${input.command.type}'.`,
+    ),
+  );
+}
+
 export function requireThreadAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
@@ -100,6 +117,23 @@ export function requireThreadAbsent(input: {
     invariantError(
       input.command.type,
       `Thread '${input.threadId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireThreadNotArchived(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+  const thread = findThreadById(input.readModel, input.threadId);
+  if (thread && thread.archivedAt === null) {
+    return Effect.succeed(thread);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Thread '${input.threadId}' is already archived for command '${input.command.type}'.`,
     ),
   );
 }

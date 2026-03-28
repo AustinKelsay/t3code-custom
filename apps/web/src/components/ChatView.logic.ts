@@ -32,6 +32,7 @@ export function buildLocalDraftThread(
     session: null,
     messages: [],
     error,
+    archivedAt: null,
     pinnedAt: null,
     sortOrder: Date.parse(draftThread.createdAt),
     createdAt: draftThread.createdAt,

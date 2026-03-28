@@ -20,6 +20,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     activities: [],
     proposedPlans: [],
     error: null,
+    archivedAt: null,
     pinnedAt: null,
     sortOrder: 1,
     createdAt: "2026-02-13T00:00:00.000Z",

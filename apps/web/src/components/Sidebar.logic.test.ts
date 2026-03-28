@@ -4,6 +4,7 @@ import type { Project, Thread } from "../types";
 
 import {
   filterSidebarProjects,
+  getVisibleThreadsForProject,
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -40,6 +41,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     proposedPlans: [],
     error: null,
+    archivedAt: null,
     pinnedAt: null,
     sortOrder: 1,
     createdAt: "2026-03-09T10:00:00.000Z",
@@ -179,6 +181,67 @@ describe("filterSidebarProjects", () => {
         filterText: "does-not-exist",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("getVisibleThreadsForProject", () => {
+  it("returns all threads when the list is expanded", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "thread-2" as never,
+        isThreadListExpanded: true,
+        previewLimit: 1,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: threads,
+    });
+  });
+
+  it("keeps the active thread visible when it falls outside the preview slice", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-3" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "thread-3" as never,
+        isThreadListExpanded: false,
+        previewLimit: 2,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: [threads[0]!, threads[1]!, threads[2]!],
+    });
+  });
+
+  it("falls back to the preview slice when the active thread is absent", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-3" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "missing" as never,
+        isThreadListExpanded: false,
+        previewLimit: 2,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: [threads[0]!, threads[1]!],
+    });
   });
 });
 

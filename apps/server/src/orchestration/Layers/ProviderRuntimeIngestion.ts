@@ -116,6 +116,74 @@ function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unkno
   return payload as Record<string, unknown>;
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function buildContextWindowActivityPayload(
+  event: ProviderRuntimeEvent,
+): Record<string, unknown> | undefined {
+  if (event.type !== "thread.token-usage.updated") {
+    return undefined;
+  }
+
+  const usage =
+    event.payload && typeof event.payload === "object"
+      ? ((event.payload as Record<string, unknown>).usage as Record<string, unknown> | undefined)
+      : undefined;
+  const totalUsage =
+    usage && typeof usage.total_token_usage === "object"
+      ? (usage.total_token_usage as Record<string, unknown>)
+      : usage && typeof usage.total === "object"
+        ? (usage.total as Record<string, unknown>)
+        : undefined;
+  const lastUsage =
+    usage && typeof usage.last_token_usage === "object"
+      ? (usage.last_token_usage as Record<string, unknown>)
+      : usage && typeof usage.last === "object"
+        ? (usage.last as Record<string, unknown>)
+        : undefined;
+
+  const totalProcessedTokens =
+    asNumber(totalUsage?.total_tokens) ?? asNumber(totalUsage?.totalTokens);
+  const usedTokens =
+    asNumber(lastUsage?.total_tokens) ??
+    asNumber(lastUsage?.totalTokens) ??
+    totalProcessedTokens ??
+    asNumber(usage?.usedTokens);
+  if (usedTokens === undefined || usedTokens <= 0) {
+    return undefined;
+  }
+
+  const maxTokens = asNumber(usage?.model_context_window) ?? asNumber(usage?.modelContextWindow);
+  const inputTokens = asNumber(lastUsage?.input_tokens) ?? asNumber(lastUsage?.inputTokens);
+  const cachedInputTokens =
+    asNumber(lastUsage?.cached_input_tokens) ?? asNumber(lastUsage?.cachedInputTokens);
+  const outputTokens = asNumber(lastUsage?.output_tokens) ?? asNumber(lastUsage?.outputTokens);
+  const reasoningOutputTokens =
+    asNumber(lastUsage?.reasoning_output_tokens) ?? asNumber(lastUsage?.reasoningOutputTokens);
+
+  return {
+    usedTokens,
+    ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
+      ? { totalProcessedTokens }
+      : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
+    ...(usedTokens !== undefined ? { lastUsedTokens: usedTokens } : {}),
+    ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined
+      ? { lastReasoningOutputTokens: reasoningOutputTokens }
+      : {}),
+    compactsAutomatically: true,
+  };
+}
+
 function normalizeRuntimeTurnState(
   value: string | undefined,
 ): "completed" | "failed" | "interrupted" | "cancelled" {
@@ -410,6 +478,26 @@ function runtimeEventToActivities(
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "thread.token-usage.updated": {
+      const payload = buildContextWindowActivityPayload(event);
+      if (!payload) {
+        return [];
+      }
+
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "context-window.updated",
+          summary: "Context window updated",
+          payload,
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },

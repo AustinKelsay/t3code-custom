@@ -185,6 +185,49 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function getVisibleThreadsForProject(input: {
+  threads: readonly Thread[];
+  activeThreadId: Thread["id"] | undefined;
+  isThreadListExpanded: boolean;
+  previewLimit: number;
+}): {
+  hasHiddenThreads: boolean;
+  visibleThreads: Thread[];
+} {
+  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
+  const hasHiddenThreads = threads.length > previewLimit;
+
+  if (!hasHiddenThreads || isThreadListExpanded) {
+    return {
+      hasHiddenThreads,
+      visibleThreads: [...threads],
+    };
+  }
+
+  const previewThreads = threads.slice(0, previewLimit);
+  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
+    return {
+      hasHiddenThreads: true,
+      visibleThreads: previewThreads,
+    };
+  }
+
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  if (!activeThread) {
+    return {
+      hasHiddenThreads: true,
+      visibleThreads: previewThreads,
+    };
+  }
+
+  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
+
+  return {
+    hasHiddenThreads: true,
+    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
+  };
+}
+
 function normalizeSidebarFilter(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
@@ -218,4 +261,23 @@ export function filterSidebarProjects(input: {
 
     return [{ project, threads: matchingThreads, projectMatched }];
   });
+}
+
+export function getFallbackThreadIdAfterThreadHidden(input: {
+  threads: readonly Thread[];
+  currentThreadId: Thread["id"];
+  preferredProjectId: Project["id"];
+  excludedThreadIds?: ReadonlySet<Thread["id"]>;
+}): Thread["id"] | null {
+  const excludedThreadIds = input.excludedThreadIds ?? new Set<Thread["id"]>();
+  const visibleThreads = input.threads.filter(
+    (thread) =>
+      thread.id !== input.currentThreadId &&
+      !excludedThreadIds.has(thread.id) &&
+      (thread.archivedAt ?? null) === null,
+  );
+
+  const preferredThread =
+    visibleThreads.find((thread) => thread.projectId === input.preferredProjectId) ?? null;
+  return preferredThread?.id ?? visibleThreads[0]?.id ?? null;
 }

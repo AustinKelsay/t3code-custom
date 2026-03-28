@@ -260,6 +260,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          archivedAt: null,
           pinnedAt: null,
           sortOrder: 1,
           latestTurn: {
