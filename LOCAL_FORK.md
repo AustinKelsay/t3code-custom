@@ -20,6 +20,14 @@ Each layer has a different role:
 - Nick's fork is the inherited customization layer that this repo builds on.
 - `t3code-custom` is the local layer for opinionated changes that support how this project is actually used day to day.
 
+The live remotes in this checkout map to that chain as:
+
+- `upstream` -> `pingdotgg/t3code`
+- `ntheile` -> `ntheile/t3code`
+- `origin` -> `AustinKelsay/t3code-custom`
+
+For the current high-level delta against both parent repos, see [docs/fork-differences.md](/tmp/t3code-doc-cleanup/docs/fork-differences.md).
+
 ## What This Document Is For
 
 This file is the local fork policy doc.
