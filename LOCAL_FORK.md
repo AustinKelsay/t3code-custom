@@ -132,9 +132,10 @@ That command is the preferred workflow because it does the exact sequence this f
 
 1. builds `apps/web`
 2. builds `apps/server`
-3. binds the server to the current Tailscale IPv4 address
+3. configures `tailscale serve` for private HTTPS on the node `ts.net` hostname
 4. generates or uses `T3CODE_AUTH_TOKEN`
-5. prints the exact phone URL as `http://<tailnet-ip>:3773/?token=<token>`
+5. starts the server on `127.0.0.1`
+6. prints the exact phone URL as `https://<device>.<tailnet>.ts.net/?token=<token>`
 
 Operational rules for this fork:
 
@@ -150,7 +151,7 @@ The setup that is currently known-good for this fork is:
 
 - web mode only for remote access
 - Tailscale for network access
-- a fixed URL shape of `http://<tailnet-ip>:<port>/?token=<token>`
+- a fixed URL shape of `https://<device>.<tailnet>.ts.net/?token=<token>`
 - server state rooted at `T3CODE_HOME`, which defaults to `~/.t3`
 - the desktop app kept closed while the remote web session is active
 
@@ -174,10 +175,11 @@ export PATH="$HOME/.bun/bin:$PATH"
 bun run start:web:tailscale
 ```
 
-This fork now relies on three implementation details for that flow:
+This fork now relies on five implementation details for that flow:
 
 - the launcher script builds `apps/web` first and `apps/server` second before starting the server
 - the launcher script loads `.env.local` without requiring shell exports first
+- the launcher script configures `tailscale serve` so the remote browser runs in a secure HTTPS context
 - the browser client preserves the remote `token` query parameter across navigation and reloads
 - the server serves `index.html` with `Cache-Control: no-store` so mobile Safari does not get stuck on a stale shell
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { DEFAULT_VOICE_SILENCE_DURATION_MS } from "../appSettings";
 import { ensureNativeApi } from "../nativeApi";
+import { playHtmlAudioElement } from "./audioPlayback";
 import { normalizeRealtimeVoiceName } from "./realtimeVoice";
 import { useVoiceCuePlayer } from "./useVoiceCuePlayer";
 import { registerVoiceSession, releaseVoiceSession } from "./voiceSessionRegistry";
@@ -43,6 +44,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
   const [state, dispatch] = useReducer(voiceReducer, DEFAULT_VOICE_UI_STATE);
   const [activeMicrophoneLabel, setActiveMicrophoneLabel] = useState<string | null>(null);
   const realtimeVoice = normalizeRealtimeVoiceName(voice);
+  const keepRealtimePlaybackMuted = !liveRepliesEnabled;
   const sessionRef = useRef<RealtimeSession | null>(null);
   const selectedMicrophoneDeviceId = microphoneDeviceId?.trim() || null;
   const finalizedItemIdsRef = useRef(new Set<string>());
@@ -196,14 +198,14 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
 
     const audioElement = document.createElement("audio");
     audioElement.autoplay = true;
-    audioElement.muted = false;
+    audioElement.muted = keepRealtimePlaybackMuted;
     audioElement.className = "hidden";
     audioElement.dataset.t3VoicePlayback = "true";
     audioElement.setAttribute("playsinline", "");
     document.body.append(audioElement);
     audioElementRef.current = audioElement;
     return audioElement;
-  }, []);
+  }, [keepRealtimePlaybackMuted]);
 
   const releaseAudioElement = useCallback(() => {
     const audioElement = audioElementRef.current;
@@ -254,6 +256,14 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
     releaseMediaStream,
     threadId,
   ]);
+
+  useEffect(() => {
+    const audioElement = audioElementRef.current;
+    if (!audioElement) {
+      return;
+    }
+    audioElement.muted = keepRealtimePlaybackMuted;
+  }, [keepRealtimePlaybackMuted]);
 
   useEffect(() => {
     if (!sessionRef.current) {
@@ -434,7 +444,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
                     threshold: 0.5,
                   },
           },
-          ...(realtimeVoice ? { output: { voice: realtimeVoice } } : {}),
+          ...(liveRepliesEnabled && realtimeVoice ? { output: { voice: realtimeVoice } } : {}),
         },
       });
     },
@@ -592,7 +602,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
         transport,
         ...(model ? { model } : {}),
         config: {
-          outputModalities: ["audio"],
+          outputModalities: liveRepliesEnabled ? ["audio"] : ["text"],
           audio: {
             input: {
               transcription: {
@@ -607,7 +617,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
                 threshold: 0.5,
               },
             },
-            ...(realtimeVoice ? { output: { voice: realtimeVoice } } : {}),
+            ...(liveRepliesEnabled && realtimeVoice ? { output: { voice: realtimeVoice } } : {}),
           },
         },
       });
@@ -627,7 +637,12 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
         }
 
         if (event.type === "output_audio_buffer.started") {
-          void audioElementRef.current?.play().catch(() => undefined);
+          const audioElement = audioElementRef.current;
+          if (audioElement) {
+            void playHtmlAudioElement(audioElement, {
+              keepMuted: keepRealtimePlaybackMuted,
+            }).catch(() => undefined);
+          }
           return;
         }
 
@@ -656,7 +671,12 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
         }
 
         if (event.type === "output_audio_buffer.started") {
-          void audioElementRef.current?.play().catch(() => undefined);
+          const audioElement = audioElementRef.current;
+          if (audioElement) {
+            void playHtmlAudioElement(audioElement, {
+              keepMuted: keepRealtimePlaybackMuted,
+            }).catch(() => undefined);
+          }
           return;
         }
 
@@ -786,6 +806,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
     model,
     releaseAudioElement,
     releaseMediaStream,
+    keepRealtimePlaybackMuted,
     resolvedSilenceDurationMs,
     scheduleTranscriptWaitFallback,
     threadId,

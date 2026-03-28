@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_VOICE_PLAYBACK_RATE_VALUE } from "../appSettings";
 import { ensureNativeApi } from "../nativeApi";
 import type { ThreadId } from "@t3tools/contracts";
+import { playHtmlAudioElement } from "./audioPlayback";
 
 interface UseRealtimeSpeechOutputInput {
   readonly threadId: ThreadId;
@@ -375,7 +376,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
         return;
       }
       playingRef.current = true;
-      await audioElement.play();
+      await playHtmlAudioElement(audioElement);
       void maybePrefetchNextSentence();
     } catch {
       if (controller.signal.aborted) {
@@ -592,7 +593,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     if (audioElement && audioElement.currentSrc) {
       applyPlaybackRate(audioElement);
       playingRef.current = true;
-      void audioElement.play().catch(() => {
+      void playHtmlAudioElement(audioElement).catch(() => {
         playingRef.current = false;
         void processQueueRef.current?.();
       });
