@@ -194,7 +194,7 @@ const notesTheme: NonNullable<InitialConfigType["theme"]> = {
     h4: "mt-3 mb-2 text-[1.2rem] leading-tight font-semibold tracking-tight text-foreground",
   },
   list: {
-    checklist: "my-3 ml-0 list-none space-y-1",
+    checklist: "thread-notes-checklist my-3 ml-0 list-none pl-0 space-y-1",
     listitem: "my-1",
     listitemChecked:
       "relative ml-0 list-none pl-7 text-muted-foreground line-through before:absolute before:top-[0.32rem] before:left-0 before:flex before:size-4 before:items-center before:justify-center before:rounded-[4px] before:border before:border-primary before:bg-primary before:text-[11px] before:text-primary-foreground before:shadow-[0_0_0_1px_var(--color-primary)] before:content-['✓'] dark:before:border-primary dark:before:bg-primary dark:before:text-primary-foreground dark:before:shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-background)_20%,var(--color-primary))]",
@@ -203,8 +203,8 @@ const notesTheme: NonNullable<InitialConfigType["theme"]> = {
     nested: {
       listitem: "ml-0 list-none pl-0 before:hidden after:hidden",
     },
-    ol: "my-3 ml-5 list-decimal space-y-1",
-    ul: "my-3 ml-5 list-disc space-y-1",
+    ol: "my-3 ml-5 list-decimal pl-0 space-y-1",
+    ul: "my-3 ml-5 list-disc pl-0 space-y-1",
   },
   ltr: "text-left",
   link: "text-blue-700 underline decoration-blue-500/50 underline-offset-2 dark:text-blue-300",
@@ -1431,7 +1431,7 @@ export function ThreadNotesEditor(props: {
                         "min-h-[calc(100dvh-16rem)] rounded-none border-0 bg-transparent outline-none",
                         "leading-[1.75] text-foreground",
                         "touch-auto",
-                        "[&_ol]:ml-6 [&_ol]:list-decimal [&_ul]:ml-6 [&_ul]:list-disc",
+                        "[&_li>.thread-notes-checklist]:-ml-4",
                       )}
                       style={{
                         fontFamily: NOTES_FONT_FAMILIES[fontFamily],
