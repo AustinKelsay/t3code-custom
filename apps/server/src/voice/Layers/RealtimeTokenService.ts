@@ -1,6 +1,7 @@
 import type { VoiceRealtimeClientSecret } from "@t3tools/contracts";
 import { Config, Effect, Layer } from "effect";
 
+import { createLogger } from "../../logger.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   RealtimeTokenService,
@@ -57,10 +58,16 @@ function toRealtimeTokenError(message: string, cause?: unknown): RealtimeTokenSe
 }
 
 const makeRealtimeTokenService = Effect.gen(function* () {
+  const logger = createLogger("voice.realtime");
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   const createClientSecret: RealtimeTokenServiceShape["createClientSecret"] = (input) =>
     Effect.gen(function* () {
+      logger.info("create client secret requested", {
+        threadId: input.threadId,
+        model: input.model ?? null,
+        voice: input.voice ?? null,
+      });
       const config = yield* RealtimeEnvConfig.asEffect().pipe(
         Effect.mapError((cause) =>
           toRealtimeTokenError("Failed to read OpenAI Realtime configuration.", cause),
@@ -122,6 +129,16 @@ const makeRealtimeTokenService = Effect.gen(function* () {
           },
         },
       };
+      logger.info("requesting openai realtime client secret", {
+        threadId: input.threadId,
+        model: input.model ?? config.model,
+        requestedVoice: input.voice ?? null,
+        resolvedVoice: REALTIME_SUPPORTED_VOICES.has(input.voice ?? config.voice)
+          ? (input.voice ?? config.voice)
+          : null,
+        threadTitle: thread.title,
+        projectTitle: project.title,
+      });
 
       const response = yield* Effect.tryPromise({
         try: () =>
@@ -154,6 +171,11 @@ const makeRealtimeTokenService = Effect.gen(function* () {
           typeof payload.error.message === "string"
             ? payload.error.message
             : `OpenAI Realtime client secret request failed with status ${response.status}.`;
+        logger.error("openai realtime client secret request failed", {
+          threadId: input.threadId,
+          status: response.status,
+          message,
+        });
         return yield* toRealtimeTokenError(message);
       }
 
@@ -170,6 +192,11 @@ const makeRealtimeTokenService = Effect.gen(function* () {
       }
 
       const expiresAt = new Date(payload.expires_at * 1000).toISOString();
+      logger.info("openai realtime client secret created", {
+        threadId: input.threadId,
+        sessionId: typeof payload.session?.id === "string" ? payload.session.id : null,
+        expiresAt,
+      });
 
       return {
         value: payload.value,

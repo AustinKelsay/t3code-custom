@@ -1,5 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon, LoaderCircleIcon, PlayIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LoaderCircleIcon, PauseIcon, PlayIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
@@ -52,6 +52,7 @@ interface ChatMarkdownProps {
   activeSentence?: string | null;
   activeParagraph?: string | null;
   activeParagraphIndex?: number | null;
+  isSpeakingPaused?: boolean;
   pendingPlayParagraph?: string | null;
   pendingPlayParagraphIndex?: number | null;
   onPlayParagraph?: (paragraphIndex: number, paragraphText: string) => void;
@@ -300,6 +301,7 @@ function ChatMarkdown({
   activeSentence = null,
   activeParagraph = null,
   activeParagraphIndex = null,
+  isSpeakingPaused = false,
   pendingPlayParagraph = null,
   pendingPlayParagraphIndex = null,
   onPlayParagraph,
@@ -342,24 +344,49 @@ function ChatMarkdown({
       const isPending =
         pendingPlayParagraphIndex === paragraphIndex ||
         (pendingPlayParagraphIndex === null && pendingPlayParagraph === normalizedParagraph);
+      const isActive =
+        activeParagraphIndex === paragraphIndex ||
+        paragraphMatchesActiveParagraph(normalizedParagraph);
       const showPending =
         optimisticPendingParagraph === normalizedParagraph ||
         pendingPlayParagraphIndex === paragraphIndex ||
         isPending;
+      const showPause = isActive && !showPending && !isSpeakingPaused;
+      const showResume = isActive && !showPending && isSpeakingPaused;
       return (
         <button
           type="button"
           className={`relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border transition-opacity sm:size-5 ${
             showPending
               ? "border-primary/50 bg-primary/12 text-primary shadow-sm shadow-primary/15 opacity-100 ring-2 ring-primary/20"
-              : "border-border/55 bg-background/85 text-muted-foreground/70 hover:text-foreground sm:opacity-0 sm:group-hover/voice-paragraph:opacity-100"
+              : showPause || showResume
+                ? "border-primary/40 bg-primary/10 text-primary opacity-100"
+                : "border-border/55 bg-background/85 text-muted-foreground/70 hover:text-foreground sm:opacity-0 sm:group-hover/voice-paragraph:opacity-100"
           }`}
           onClick={() => {
-            setOptimisticPendingParagraph(normalizedParagraph);
+            if (!showPause && !showResume) {
+              setOptimisticPendingParagraph(normalizedParagraph);
+            }
             onPlayParagraph(paragraphIndex, normalizedParagraph);
           }}
-          aria-label="Play from this paragraph"
-          title={showPending ? "Loading paragraph playback" : "Play from this paragraph"}
+          aria-label={
+            showPending
+              ? "Loading paragraph playback"
+              : showPause
+                ? "Pause paragraph playback"
+                : showResume
+                  ? "Resume paragraph playback"
+                  : "Play from this paragraph"
+          }
+          title={
+            showPending
+              ? "Loading paragraph playback"
+              : showPause
+                ? "Pause paragraph playback"
+                : showResume
+                  ? "Resume paragraph playback"
+                  : "Play from this paragraph"
+          }
           aria-busy={showPending}
           disabled={showPending}
         >
@@ -368,6 +395,8 @@ function ChatMarkdown({
               <span className="absolute inset-0 rounded-full animate-pulse bg-primary/10" />
               <LoaderCircleIcon className="relative z-10 size-3 animate-spin" />
             </>
+          ) : showPause ? (
+            <PauseIcon className="size-3" />
           ) : (
             <PlayIcon className="size-3" />
           )}
@@ -556,6 +585,7 @@ function ChatMarkdown({
     activeSentence,
     activeParagraph,
     activeParagraphIndex,
+    isSpeakingPaused,
     cwd,
     diffThemeName,
     isStreaming,

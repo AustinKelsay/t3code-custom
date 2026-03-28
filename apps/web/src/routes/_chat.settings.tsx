@@ -32,6 +32,8 @@ import {
 import { portForwardListQueryOptions, portForwardQueryKeys } from "../lib/portForwardReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { APP_VIEWPORT_CSS_HEIGHT } from "../lib/viewport";
+import { useAudioInputDevices } from "../voice/useAudioInputDevices";
+import { REALTIME_VOICE_OPTIONS } from "../voice/realtimeVoice";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
@@ -86,22 +88,6 @@ const UI_SCALE_LABELS = {
   xl: "XL",
   xxl: "XXL",
 } as const;
-const OPENAI_VOICE_OPTIONS = [
-  { value: "", label: "Server default" },
-  { value: "alloy", label: "Alloy" },
-  { value: "ash", label: "Ash" },
-  { value: "ballad", label: "Ballad" },
-  { value: "cedar", label: "Cedar" },
-  { value: "coral", label: "Coral" },
-  { value: "echo", label: "Echo" },
-  { value: "fable", label: "Fable" },
-  { value: "marin", label: "Marin" },
-  { value: "nova", label: "Nova" },
-  { value: "onyx", label: "Onyx" },
-  { value: "sage", label: "Sage" },
-  { value: "shimmer", label: "Shimmer" },
-  { value: "verse", label: "Verse" },
-] as const;
 const VOICE_PLAYBACK_RATE_LABELS: Record<VoicePlaybackRate, string> = {
   "0.75": "0.75x",
   "1.0": "1.0x",
@@ -121,6 +107,7 @@ const VOICE_SILENCE_DURATION_LABELS: Record<VoiceSilenceDuration, string> = {
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
+  const audioInputDevices = useAudioInputDevices();
   const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const executionTargetQuery = useQuery(executionTargetListQueryOptions());
@@ -1247,9 +1234,9 @@ function SettingsRouteView() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                   <div>
-                    <p className="text-sm font-medium text-foreground">Enable voice features</p>
+                    <p className="text-sm font-medium text-foreground">Enable spoken replies</p>
                     <p className="text-xs text-muted-foreground">
-                      Shows the mic and speaker controls in chat and allows voice sessions.
+                      Shows speaker controls in chat and allows assistant readback.
                     </p>
                   </div>
                   <Switch
@@ -1260,6 +1247,25 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Enable voice features"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Enable microphone input</p>
+                    <p className="text-xs text-muted-foreground">
+                      Shows the mic and “Hey T3” controls in chat and allows in-app voice capture.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.voiceInputEnabled}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        voiceInputEnabled: Boolean(checked),
+                        ...(checked ? {} : { voiceWakePhraseEnabled: false }),
+                      })
+                    }
+                    aria-label="Enable microphone input"
                   />
                 </div>
 
@@ -1317,7 +1323,7 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Enable Hey T3 wake phrase mode"
-                    disabled={!settings.voiceEnabled}
+                    disabled={!settings.voiceInputEnabled}
                   />
                 </div>
 
@@ -1359,14 +1365,63 @@ function SettingsRouteView() {
                   >
                     <SelectTrigger className="w-full" aria-label="Voice name">
                       <SelectValue placeholder="Server default">
-                        {OPENAI_VOICE_OPTIONS.find((option) => option.value === settings.voiceName)
-                          ?.label ?? "Server default"}
+                        {REALTIME_VOICE_OPTIONS.find(
+                          (option) => option.value === settings.voiceName,
+                        )?.label ?? "Server default"}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
-                      {OPENAI_VOICE_OPTIONS.map((option) => (
+                      {REALTIME_VOICE_OPTIONS.map((option) => (
                         <SelectItem key={option.value || "default"} value={option.value}>
                           {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Microphone input</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose which microphone voice input uses. Your AirPods will appear here
+                        after the browser can see them.
+                      </p>
+                    </div>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        void audioInputDevices.refresh();
+                      }}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                  <Select
+                    value={settings.voiceInputDeviceId}
+                    onValueChange={(value) =>
+                      updateSettings({
+                        voiceInputDeviceId: value ?? "",
+                      })
+                    }
+                    disabled={!audioInputDevices.isSupported}
+                  >
+                    <SelectTrigger className="w-full" aria-label="Microphone input">
+                      <SelectValue placeholder="System default microphone">
+                        {settings.voiceInputDeviceId
+                          ? (audioInputDevices.devices.find(
+                              (device) => device.deviceId === settings.voiceInputDeviceId,
+                            )?.label ?? "Previously selected microphone")
+                          : "System default microphone"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="">System default microphone</SelectItem>
+                      {audioInputDevices.devices.map((device) => (
+                        <SelectItem key={device.deviceId} value={device.deviceId}>
+                          {device.label}
                         </SelectItem>
                       ))}
                     </SelectPopup>
@@ -1487,11 +1542,13 @@ function SettingsRouteView() {
                 </div>
 
                 {settings.voiceEnabled !== defaults.voiceEnabled ||
+                settings.voiceInputEnabled !== defaults.voiceInputEnabled ||
                 settings.voiceWakePhraseEnabled !== defaults.voiceWakePhraseEnabled ||
                 settings.voiceAutoSpeakReplies !== defaults.voiceAutoSpeakReplies ||
                 settings.voiceHighlightSpokenSentence !== defaults.voiceHighlightSpokenSentence ||
                 settings.voiceModel !== defaults.voiceModel ||
                 settings.voiceName !== defaults.voiceName ||
+                settings.voiceInputDeviceId !== defaults.voiceInputDeviceId ||
                 settings.voicePlaybackRate !== defaults.voicePlaybackRate ||
                 settings.voiceSilenceDuration !== defaults.voiceSilenceDuration ||
                 settings.voiceInstructions !== defaults.voiceInstructions ? (
@@ -1502,11 +1559,13 @@ function SettingsRouteView() {
                       onClick={() =>
                         updateSettings({
                           voiceEnabled: defaults.voiceEnabled,
+                          voiceInputEnabled: defaults.voiceInputEnabled,
                           voiceWakePhraseEnabled: defaults.voiceWakePhraseEnabled,
                           voiceAutoSpeakReplies: defaults.voiceAutoSpeakReplies,
                           voiceHighlightSpokenSentence: defaults.voiceHighlightSpokenSentence,
                           voiceModel: defaults.voiceModel,
                           voiceName: defaults.voiceName,
+                          voiceInputDeviceId: defaults.voiceInputDeviceId,
                           voicePlaybackRate: defaults.voicePlaybackRate,
                           voiceSilenceDuration: defaults.voiceSilenceDuration,
                           voiceInstructions: defaults.voiceInstructions,

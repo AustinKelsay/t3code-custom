@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Option, Schema } from "effect";
 import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
 import {
@@ -7,8 +7,10 @@ import {
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { useLocalStorage } from "./hooks/useLocalStorage";
+import { getLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { useIsMobile } from "./hooks/useMediaQuery";
 import { EnvMode } from "./components/BranchToolbar.logic";
+import { normalizeRealtimeVoiceName } from "./voice/realtimeVoice";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -61,12 +63,14 @@ export const AppSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
+  voiceInputEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceWakePhraseEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceLiveRepliesEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
   voiceAutoSpeakReplies: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceHighlightSpokenSentence: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceModel: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
   voiceName: Schema.String.check(Schema.isMaxLength(256)).pipe(withDefaults(() => "")),
+  voiceInputDeviceId: Schema.String.check(Schema.isMaxLength(512)).pipe(withDefaults(() => "")),
   voicePlaybackRate: VoicePlaybackRate.pipe(withDefaults(() => "1.5" as const)),
   voiceSilenceDuration: VoiceSilenceDuration.pipe(withDefaults(() => "3.0" as const)),
   voiceInstructions: Schema.String.check(Schema.isMaxLength(2048)).pipe(
@@ -87,7 +91,20 @@ export interface AppModelOption {
   isCustom: boolean;
 }
 
-const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
+function getDefaultAppSettings(options?: { isMobile?: boolean }): AppSettings {
+  const defaults = AppSettingsSchema.makeUnsafe({});
+  if (!options?.isMobile) {
+    return defaults;
+  }
+
+  return {
+    ...defaults,
+    voiceInputEnabled: false,
+    voiceWakePhraseEnabled: false,
+  };
+}
+
+const DEFAULT_APP_SETTINGS = getDefaultAppSettings();
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
   codex: {
     provider: "codex",
@@ -142,6 +159,7 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    voiceName: normalizeRealtimeVoiceName(settings.voiceName) ?? "",
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
@@ -261,6 +279,8 @@ export function resolveVoiceSilenceDurationMs(value: string | null | undefined):
 }
 
 export function useAppSettings() {
+  const isMobile = useIsMobile();
+  const platformDefaults = useMemo(() => getDefaultAppSettings({ isMobile }), [isMobile]);
   const [settings, setSettings] = useLocalStorage(
     APP_SETTINGS_STORAGE_KEY,
     DEFAULT_APP_SETTINGS,
@@ -275,13 +295,22 @@ export function useAppSettings() {
   );
 
   const resetSettings = useCallback(() => {
-    setSettings(DEFAULT_APP_SETTINGS);
-  }, [setSettings]);
+    setSettings(platformDefaults);
+  }, [platformDefaults, setSettings]);
+
+  useEffect(() => {
+    const persistedSettings = getLocalStorageItem(APP_SETTINGS_STORAGE_KEY, AppSettingsSchema);
+    if (persistedSettings !== null || !isMobile) {
+      return;
+    }
+
+    setSettings(platformDefaults);
+  }, [isMobile, platformDefaults, setSettings]);
 
   return {
     settings,
     updateSettings,
     resetSettings,
-    defaults: DEFAULT_APP_SETTINGS,
+    defaults: platformDefaults,
   } as const;
 }
