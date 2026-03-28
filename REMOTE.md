@@ -50,7 +50,8 @@ Notes:
 
 ## 2) Tailnet / Tailscale access
 
-If you use Tailscale, you can bind directly to your Tailnet address.
+If you use Tailscale, prefer Tailscale Serve so the web app loads over HTTPS on your `ts.net`
+hostname. This is required for browser microphone access.
 
 ```bash
 bun run start:web:tailscale
@@ -58,9 +59,16 @@ bun run start:web:tailscale
 
 Open from any device in your tailnet:
 
-`http://<tailnet-ip>:3773/?token=<token>`
+`https://<device>.<tailnet>.ts.net/?token=<token>`
 
-The helper prints the exact phone URL after it builds `apps/web`, builds `apps/server`, and starts the server bound to your current Tailnet IP.
+The helper prints the exact phone URL after it builds `apps/web`, builds `apps/server`,
+configures `tailscale serve`, and starts the server bound to loopback on the host machine.
+
+Important:
+
+- `tailscale serve` changes machine-level Tailscale serve state, not just this process
+- if the host already uses `tailscale serve` for something else, inspect that config before reusing this helper
+- use `tailscale serve status` to confirm what is currently published on the node
 
 For a stable personal host, the recommended environment is:
 
@@ -91,15 +99,16 @@ Operational note:
 If you prefer to run it manually:
 
 ```bash
-TAILNET_IP="$(tailscale ip -4)"
+TSNET_HOST="$(tailscale status --json | jq -r '.CertDomains[0]')"
 TOKEN="$(openssl rand -hex 24)"
 bun run --cwd apps/web build
 bun run --cwd apps/server build
-bun run --cwd apps/server start -- --host "$TAILNET_IP" --port 3773 --auth-token "$TOKEN" --no-browser
+tailscale serve --bg --https 443 http://127.0.0.1:3773
+bun run --cwd apps/server start -- --host 127.0.0.1 --port 3773 --auth-token "$TOKEN" --no-browser
 ```
 
 Then open:
 
-`http://<tailnet-ip>:3773/?token=<token>`
+`https://$TSNET_HOST/?token=$TOKEN`
 
-You can also bind `--host 0.0.0.0` and connect through the Tailnet IP, but binding directly to the Tailnet IP limits exposure.
+If you need to inspect the current proxy config, run `tailscale serve status`.

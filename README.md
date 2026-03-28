@@ -2,6 +2,8 @@
 
 T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
+This repository is a personal fork. For fork-specific policy, lineage, and operational differences, read [LOCAL_FORK.md](./LOCAL_FORK.md) and [docs/fork-differences.md](./docs/fork-differences.md).
+
 ## How to use
 
 > [!WARNING]
