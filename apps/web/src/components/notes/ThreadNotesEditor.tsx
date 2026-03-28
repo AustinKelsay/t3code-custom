@@ -1,9 +1,13 @@
+import { AutoLinkPlugin, createLinkMatcherWithRegExp } from "@lexical/react/LexicalAutoLinkPlugin";
+import { ClickableLinkPlugin } from "@lexical/react/LexicalClickableLinkPlugin";
 import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
+import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { $createCodeNode, $isCodeNode, CodeHighlightNode, CodeNode } from "@lexical/code";
+import { $isLinkNode, AutoLinkNode, formatUrl, LinkNode, TOGGLE_LINK_COMMAND } from "@lexical/link";
 import {
   getCodeLanguageOptions,
   registerCodeHighlighting,
@@ -20,12 +24,22 @@ import {
   REMOVE_LIST_COMMAND,
 } from "@lexical/list";
 import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
-import { $setBlocksType } from "@lexical/selection";
 import {
+  $getSelectionStyleValueForProperty,
+  $patchStyleText,
+  $setBlocksType,
+} from "@lexical/selection";
+import {
+  AlignCenterIcon,
+  AlignLeftIcon,
+  AlignRightIcon,
   BoldIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   Code2Icon,
   ListChecksIcon,
+  Link2Icon,
   MinusIcon,
   Redo2Icon,
   Heading2Icon,
@@ -44,22 +58,34 @@ import {
   $getSelection,
   $isRangeSelection,
   COMMAND_PRIORITY_LOW,
+  FORMAT_ELEMENT_COMMAND,
   FORMAT_TEXT_COMMAND,
+  INDENT_CONTENT_COMMAND,
+  OUTDENT_CONTENT_COMMAND,
   REDO_COMMAND,
   SELECTION_CHANGE_COMMAND,
   UNDO_COMMAND,
+  type ElementFormatType,
   type LexicalEditor,
   type LexicalNode,
 } from "lexical";
-import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
+import { ColorPickerPopover } from "../ColorPickerPopover";
 import { Separator } from "../ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useTheme } from "../../hooks/useTheme";
 import { readUiScaleFromDocument, rootFontSizePxForUiScale } from "../../lib/uiScale";
 import { MobileCheckListTapPlugin } from "./MobileCheckListTapPlugin";
+import { ThreadNotesImageKeyboardPlugin } from "./ThreadNotesImageKeyboardPlugin";
+import { ThreadNotesImageNode } from "./ThreadNotesImageNode";
+import { ThreadNotesImagePlugin } from "./ThreadNotesImagePlugin";
+import { ThreadNotesImageRepositionPlugin } from "./ThreadNotesImageRepositionPlugin";
+import { ThreadNotesInlineImageNode } from "./ThreadNotesInlineImageNode";
+import { ThreadNotesListIndentPlugin } from "./ThreadNotesListIndentPlugin";
+import { ThreadNotesTabFocusPlugin } from "./ThreadNotesTabFocusPlugin";
 import { resolveThreadNotesInitialEditorState } from "./threadNotesEditorState";
 import { cn } from "~/lib/utils";
 
@@ -84,22 +110,28 @@ type NotesStructuredBlockType = Extract<
 
 interface NotesToolbarState {
   blockType: NotesBlockType;
+  blockAlignment: Extract<ElementFormatType, "" | "center" | "left" | "right">;
   canRedo: boolean;
   canUndo: boolean;
   codeLanguage: string;
   isBold: boolean;
   isItalic: boolean;
+  linkUrl: string | null;
+  textColor: string;
 }
 
 type NotesFontFamily = "sans" | "serif" | "mono";
 
 const DEFAULT_TOOLBAR_STATE: NotesToolbarState = {
   blockType: "paragraph",
+  blockAlignment: "",
   canRedo: false,
   canUndo: false,
   codeLanguage: "javascript",
   isBold: false,
   isItalic: false,
+  linkUrl: null,
+  textColor: "default",
 };
 
 const NOTES_FONT_FAMILIES: Record<NotesFontFamily, string> = {
@@ -112,6 +144,15 @@ const NOTES_CODE_LANGUAGE_OPTIONS = getCodeLanguageOptions().map(([value, label]
   label,
   value,
 }));
+
+const NOTES_AUTO_LINK_MATCHERS = [
+  createLinkMatcherWithRegExp(/((https?:\/\/|www\.)[^\s<]+[^<.,:;"')\]\s])/i, (text) =>
+    formatUrl(text),
+  ),
+  createLinkMatcherWithRegExp(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/, (text) =>
+    formatUrl(text),
+  ),
+];
 
 const notesTheme: NonNullable<InitialConfigType["theme"]> = {
   code: "my-4 block overflow-x-auto whitespace-pre-wrap rounded-xl border border-border/80 bg-muted/45 px-4 py-3 font-mono text-[0.92em] leading-7 text-foreground [tab-size:2]",
@@ -160,12 +201,13 @@ const notesTheme: NonNullable<InitialConfigType["theme"]> = {
     listitemUnchecked:
       "relative ml-0 list-none pl-7 before:absolute before:top-[0.32rem] before:left-0 before:size-4 before:rounded-[4px] before:border before:border-foreground/35 before:bg-background before:shadow-[0_0_0_1px_var(--color-border)] before:content-[''] dark:before:border-white/70 dark:before:bg-neutral-950 dark:before:shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-white)_22%,transparent)]",
     nested: {
-      listitem: "ml-4",
+      listitem: "ml-0 list-none pl-0 before:hidden after:hidden",
     },
     ol: "my-3 ml-5 list-decimal space-y-1",
     ul: "my-3 ml-5 list-disc space-y-1",
   },
   ltr: "text-left",
+  link: "text-blue-700 underline decoration-blue-500/50 underline-offset-2 dark:text-blue-300",
   paragraph: "my-2 text-foreground",
   quote: "my-4 border-l-3 border-border pl-4 italic text-muted-foreground",
   rtl: "text-right",
@@ -175,6 +217,89 @@ const notesTheme: NonNullable<InitialConfigType["theme"]> = {
     italic: "italic",
   },
 };
+
+function getSelectedLinkNode(selection: ReturnType<typeof $getSelection>) {
+  if (!$isRangeSelection(selection)) {
+    return null;
+  }
+
+  for (const selectedNode of [selection.anchor.getNode(), selection.focus.getNode()]) {
+    let currentNode: LexicalNode | null = selectedNode;
+    while (currentNode) {
+      if ($isLinkNode(currentNode)) {
+        return currentNode;
+      }
+      currentNode = currentNode.getParent();
+    }
+  }
+
+  return null;
+}
+
+function getSelectedBlockAlignment(
+  selection: ReturnType<typeof $getSelection>,
+): NotesToolbarState["blockAlignment"] {
+  if (!$isRangeSelection(selection)) {
+    return "";
+  }
+
+  const topLevelNode = selection.anchor.getNode().getTopLevelElementOrThrow();
+  const format = topLevelNode.getFormatType();
+  return format === "left" || format === "center" || format === "right" ? format : "";
+}
+
+function updateSelectedLink(editor: LexicalEditor, currentLinkUrl: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextUrlInput = window.prompt(
+    "Enter a URL. Leave blank to remove the link.",
+    currentLinkUrl ?? "https://",
+  );
+
+  if (nextUrlInput === null) {
+    return;
+  }
+
+  const trimmedUrl = nextUrlInput.trim();
+  editor.dispatchCommand(
+    TOGGLE_LINK_COMMAND,
+    trimmedUrl.length === 0
+      ? null
+      : {
+          rel: "noreferrer",
+          target: "_blank",
+          url: formatUrl(trimmedUrl),
+        },
+  );
+}
+
+function normalizeSelectedTextColor(selection: ReturnType<typeof $getSelection>) {
+  if (!$isRangeSelection(selection)) {
+    return "default";
+  }
+
+  const currentColor = $getSelectionStyleValueForProperty(selection, "color", "");
+  return currentColor.length === 0 ? "default" : currentColor;
+}
+
+function setSelectedTextColor(editor: LexicalEditor, nextColor: string | null) {
+  if (nextColor == null) {
+    return;
+  }
+
+  editor.update(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) {
+      return;
+    }
+
+    $patchStyleText(selection, {
+      color: nextColor === "default" ? null : nextColor,
+    });
+  });
+}
 
 function applyStructuredBlockType(editor: LexicalEditor, kind: NotesStructuredBlockType) {
   editor.update(() => {
@@ -373,110 +498,7 @@ function FloatingSelectionToolbarPlugin(props: { onSendSelectionToChat: () => vo
         transform: "translateX(-50%)",
       }}
     >
-      <ToolbarButton
-        ariaLabel="Text"
-        onClick={() => {
-          applyStructuredBlockType(editor, "paragraph");
-        }}
-      >
-        <TypeIcon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Heading 2"
-        onClick={() => {
-          applyStructuredBlockType(editor, "heading2");
-        }}
-      >
-        <Heading2Icon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Heading 3"
-        onClick={() => {
-          applyStructuredBlockType(editor, "heading3");
-        }}
-      >
-        <span className="font-semibold text-xs leading-none">H3</span>
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Heading 4"
-        onClick={() => {
-          applyStructuredBlockType(editor, "heading4");
-        }}
-      >
-        <span className="font-semibold text-xs leading-none">H4</span>
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Quote"
-        onClick={() => {
-          applyStructuredBlockType(editor, "quote");
-        }}
-      >
-        <TextQuoteIcon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Code"
-        onClick={() => {
-          applyStructuredBlockType(editor, "code");
-        }}
-      >
-        <Code2Icon className="size-3.5" />
-        <span>Code</span>
-      </ToolbarButton>
-      <Separator className="mx-0.5 h-6 bg-border/80" orientation="vertical" />
-      <ToolbarButton
-        ariaLabel="Bold"
-        onClick={() => {
-          editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold");
-        }}
-      >
-        <BoldIcon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Italic"
-        onClick={() => {
-          editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic");
-        }}
-      >
-        <ItalicIcon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Bulleted list"
-        onClick={() => {
-          editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined);
-        }}
-      >
-        <ChevronDownIcon className="size-3.5 rotate-90" />
-        <TypeIcon className="size-3.5" />
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Checklist"
-        onClick={() => {
-          editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined);
-        }}
-      >
-        <ListChecksIcon className="size-3.5" />
-        <span>Checklist</span>
-      </ToolbarButton>
-      <ToolbarButton
-        ariaLabel="Clear list"
-        onClick={() => {
-          editor.dispatchCommand(REMOVE_LIST_COMMAND, undefined);
-        }}
-      >
-        <span className="text-sm leading-none">T</span>
-      </ToolbarButton>
-      <Separator className="mx-0.5 h-6 bg-border/80" orientation="vertical" />
-      <Button
-        className="rounded-md px-3"
-        size="xs"
-        variant="default"
-        onMouseDown={(event) => {
-          event.preventDefault();
-        }}
-        onClick={props.onSendSelectionToChat}
-      >
-        Send to AI
-      </Button>
+      <SelectionFormattingControls onSendSelectionToChat={props.onSendSelectionToChat} />
     </div>
   );
 }
@@ -578,31 +600,41 @@ function useNotesToolbarModel() {
     editor.getEditorState().read(() => {
       const selection = $getSelection();
       const selectedCodeNode = getSelectedCodeNode(selection);
+      const selectedLinkNode = getSelectedLinkNode(selection);
       const nextState: NotesToolbarState = $isRangeSelection(selection)
         ? {
             blockType: getSelectedBlockType(selection),
+            blockAlignment: getSelectedBlockAlignment(selection),
             canRedo: toolbarState.canRedo,
             canUndo: toolbarState.canUndo,
             codeLanguage: selectedCodeNode?.getLanguage() ?? "javascript",
             isBold: selection.hasFormat("bold"),
             isItalic: selection.hasFormat("italic"),
+            linkUrl: selectedLinkNode?.getURL() ?? null,
+            textColor: normalizeSelectedTextColor(selection),
           }
         : {
             blockType: "paragraph",
+            blockAlignment: "",
             canRedo: toolbarState.canRedo,
             canUndo: toolbarState.canUndo,
             codeLanguage: "javascript",
             isBold: false,
             isItalic: false,
+            linkUrl: null,
+            textColor: "default",
           };
 
       setToolbarState((currentState) =>
         currentState.blockType === nextState.blockType &&
+        currentState.blockAlignment === nextState.blockAlignment &&
         currentState.canRedo === nextState.canRedo &&
         currentState.canUndo === nextState.canUndo &&
         currentState.codeLanguage === nextState.codeLanguage &&
         currentState.isBold === nextState.isBold &&
-        currentState.isItalic === nextState.isItalic
+        currentState.isItalic === nextState.isItalic &&
+        currentState.linkUrl === nextState.linkUrl &&
+        currentState.textColor === nextState.textColor
           ? currentState
           : nextState,
       );
@@ -698,11 +730,27 @@ function useNotesToolbarModel() {
     [editor],
   );
 
+  const setTextColor = useCallback(
+    (nextValue: string | null) => {
+      setSelectedTextColor(editor, nextValue ?? "default");
+    },
+    [editor],
+  );
+
+  const setBlockAlignment = useCallback(
+    (nextValue: NotesToolbarState["blockAlignment"]) => {
+      editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, nextValue === "" ? "left" : nextValue);
+    },
+    [editor],
+  );
+
   return {
     editor,
+    setBlockAlignment,
     setBlockKind,
     setBlockType,
     setCodeLanguage,
+    setTextColor,
     toolbarState,
   };
 }
@@ -712,8 +760,15 @@ function SelectionFormattingControls(props: {
   compact?: boolean;
   onSendSelectionToChat?: () => void;
 }) {
-  const { editor, setBlockKind, setBlockType, setCodeLanguage, toolbarState } =
-    useNotesToolbarModel();
+  const {
+    editor,
+    setBlockAlignment,
+    setBlockKind,
+    setBlockType,
+    setCodeLanguage,
+    setTextColor,
+    toolbarState,
+  } = useNotesToolbarModel();
 
   return (
     <div className={cn("flex min-w-max items-center gap-1 text-foreground", props.className)}>
@@ -740,6 +795,15 @@ function SelectionFormattingControls(props: {
         />
       ) : null}
 
+      <ColorPickerPopover
+        ariaLabel="Set text color"
+        currentColor={toolbarState.textColor === "default" ? null : toolbarState.textColor}
+        removeLabel="Reset color"
+        title="Set text color"
+        triggerClassName="size-8 rounded-md text-muted-foreground shadow-none hover:bg-accent/70 hover:text-foreground sm:size-7"
+        onChange={setTextColor}
+      />
+
       <Separator className="mx-0.5 h-6 bg-border/80" orientation="vertical" />
 
       <ToolbarButton
@@ -759,6 +823,15 @@ function SelectionFormattingControls(props: {
         }}
       >
         <ItalicIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        active={toolbarState.linkUrl !== null}
+        ariaLabel={toolbarState.linkUrl ? "Edit link" : "Add link"}
+        onClick={() => {
+          updateSelectedLink(editor, toolbarState.linkUrl);
+        }}
+      >
+        <Link2Icon className="size-3.5" />
       </ToolbarButton>
       <ToolbarButton
         active={toolbarState.blockType === "heading2"}
@@ -807,6 +880,33 @@ function SelectionFormattingControls(props: {
         {props.compact ? null : <span>Code</span>}
       </ToolbarButton>
       <ToolbarButton
+        active={toolbarState.blockAlignment === "left"}
+        ariaLabel="Align left"
+        onClick={() => {
+          setBlockAlignment("left");
+        }}
+      >
+        <AlignLeftIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        active={toolbarState.blockAlignment === "center"}
+        ariaLabel="Align center"
+        onClick={() => {
+          setBlockAlignment("center");
+        }}
+      >
+        <AlignCenterIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        active={toolbarState.blockAlignment === "right"}
+        ariaLabel="Align right"
+        onClick={() => {
+          setBlockAlignment("right");
+        }}
+      >
+        <AlignRightIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
         active={toolbarState.blockType === "bullet"}
         ariaLabel="Bulleted list"
         onClick={() => {
@@ -833,6 +933,22 @@ function SelectionFormattingControls(props: {
         }}
       >
         <span className="text-sm leading-none">T</span>
+      </ToolbarButton>
+      <ToolbarButton
+        ariaLabel="Outdent list item"
+        onClick={() => {
+          editor.dispatchCommand(OUTDENT_CONTENT_COMMAND, undefined);
+        }}
+      >
+        <ChevronLeftIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        ariaLabel="Indent list item"
+        onClick={() => {
+          editor.dispatchCommand(INDENT_CONTENT_COMMAND, undefined);
+        }}
+      >
+        <ChevronRightIcon className="size-3.5" />
       </ToolbarButton>
 
       {props.onSendSelectionToChat ? (
@@ -863,13 +979,23 @@ function NotesToolbar(props: {
   onFontSizeChange: (updater: (currentFontSize: number) => number) => void;
   onSendSelectionToChat: () => void;
 }) {
-  const { editor, setBlockKind, setBlockType, setCodeLanguage, toolbarState } =
-    useNotesToolbarModel();
+  const {
+    editor,
+    setBlockAlignment,
+    setBlockKind,
+    setBlockType,
+    setCodeLanguage,
+    setTextColor,
+    toolbarState,
+  } = useNotesToolbarModel();
 
   return (
-    <div className="sticky top-0 z-20 border-b border-border/80 bg-background/95 backdrop-blur">
+    <div
+      className="sticky z-20 border-b border-border/80 bg-background/95 shadow-xs/5 backdrop-blur"
+      style={{ top: "var(--thread-notes-header-height, 0px)" }}
+    >
       <div className="flex items-center gap-3 px-2 py-1.5 sm:px-3">
-        <div className="min-w-0 flex-1 overflow-x-auto">
+        <div className="min-w-0 flex-1 overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <div className="flex min-w-max items-center text-foreground">
             <ToolbarButton
               ariaLabel="Undo"
@@ -918,6 +1044,17 @@ function NotesToolbar(props: {
                 />
               </>
             ) : null}
+
+            <Separator className="mx-1 h-6 bg-border/80" orientation="vertical" />
+
+            <ColorPickerPopover
+              ariaLabel="Set text color"
+              currentColor={toolbarState.textColor === "default" ? null : toolbarState.textColor}
+              removeLabel="Reset color"
+              title="Set text color"
+              triggerClassName="size-8 rounded-md text-muted-foreground shadow-none hover:bg-accent/70 hover:text-foreground sm:size-7"
+              onChange={setTextColor}
+            />
 
             <Separator className="mx-1 h-6 bg-border/80" orientation="vertical" />
 
@@ -981,6 +1118,15 @@ function NotesToolbar(props: {
               <ItalicIcon className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton
+              active={toolbarState.linkUrl !== null}
+              ariaLabel={toolbarState.linkUrl ? "Edit link" : "Add link"}
+              onClick={() => {
+                updateSelectedLink(editor, toolbarState.linkUrl);
+              }}
+            >
+              <Link2Icon className="size-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
               active={toolbarState.blockType === "heading2"}
               ariaLabel="Heading 2"
               onClick={() => {
@@ -1027,6 +1173,33 @@ function NotesToolbar(props: {
               <span>Code</span>
             </ToolbarButton>
             <ToolbarButton
+              active={toolbarState.blockAlignment === "left"}
+              ariaLabel="Align left"
+              onClick={() => {
+                setBlockAlignment("left");
+              }}
+            >
+              <AlignLeftIcon className="size-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockAlignment === "center"}
+              ariaLabel="Align center"
+              onClick={() => {
+                setBlockAlignment("center");
+              }}
+            >
+              <AlignCenterIcon className="size-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockAlignment === "right"}
+              ariaLabel="Align right"
+              onClick={() => {
+                setBlockAlignment("right");
+              }}
+            >
+              <AlignRightIcon className="size-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
               active={toolbarState.blockType === "bullet"}
               ariaLabel="Bulleted list"
               onClick={() => {
@@ -1053,6 +1226,22 @@ function NotesToolbar(props: {
               }}
             >
               <span className="text-sm leading-none">T</span>
+            </ToolbarButton>
+            <ToolbarButton
+              ariaLabel="Outdent list item"
+              onClick={() => {
+                editor.dispatchCommand(OUTDENT_CONTENT_COMMAND, undefined);
+              }}
+            >
+              <ChevronLeftIcon className="size-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
+              ariaLabel="Indent list item"
+              onClick={() => {
+                editor.dispatchCommand(INDENT_CONTENT_COMMAND, undefined);
+              }}
+            >
+              <ChevronRightIcon className="size-3.5" />
             </ToolbarButton>
 
             <Separator className="mx-1 h-6 bg-border/80" orientation="vertical" />
@@ -1165,6 +1354,7 @@ export function ThreadNotesEditor(props: {
   const [fontFamily, setFontFamily] = useState<NotesFontFamily>("sans");
   const [defaultFontSize, setDefaultFontSize] = useState(readDefaultNotesFontSizePx);
   const [fontSizeOverride, setFontSizeOverride] = useState<number | null>(null);
+  const editorCanvasRef = useRef<HTMLDivElement>(null);
   const fontSize = fontSizeOverride ?? defaultFontSize;
 
   useEffect(() => {
@@ -1194,7 +1384,18 @@ export function ThreadNotesEditor(props: {
 
   const initialConfig = {
     namespace: THREAD_NOTES_EDITOR_NAMESPACE,
-    nodes: [CodeNode, CodeHighlightNode, HeadingNode, QuoteNode, ListNode, ListItemNode],
+    nodes: [
+      AutoLinkNode,
+      CodeNode,
+      CodeHighlightNode,
+      HeadingNode,
+      LinkNode,
+      QuoteNode,
+      ListNode,
+      ListItemNode,
+      ThreadNotesImageNode,
+      ThreadNotesInlineImageNode,
+    ],
     onError: (error: Error) => {
       throw error;
     },
@@ -1221,7 +1422,7 @@ export function ThreadNotesEditor(props: {
         <div className="min-h-0 flex-1 overflow-visible">
           <div className="flex min-h-full justify-start px-5 py-4 pb-40 sm:px-8 sm:py-6 sm:pb-32 lg:px-12">
             <div className="flex min-h-full w-full max-w-[72rem] flex-col">
-              <div className="relative min-h-[calc(100dvh-12rem)] flex-1">
+              <div className="relative min-h-[calc(100dvh-12rem)] flex-1" ref={editorCanvasRef}>
                 <RichTextPlugin
                   contentEditable={
                     <ContentEditable
@@ -1257,9 +1458,19 @@ export function ThreadNotesEditor(props: {
           </div>
         </div>
         <HistoryPlugin />
-        <ListPlugin />
+        <ThreadNotesTabFocusPlugin />
+        <AutoLinkPlugin matchers={NOTES_AUTO_LINK_MATCHERS} />
+        <ClickableLinkPlugin />
+        <LinkPlugin />
+        <ListPlugin hasStrictIndent />
+        <ThreadNotesListIndentPlugin />
         <CheckListPlugin disableTakeFocusOnClick={isTouchViewport} />
         <MobileCheckListTapPlugin enabled={isTouchViewport} />
+        <ThreadNotesImageKeyboardPlugin />
+        <ThreadNotesImagePlugin />
+        {editorCanvasRef.current ? (
+          <ThreadNotesImageRepositionPlugin anchorElem={editorCanvasRef.current} />
+        ) : null}
         <CodeHighlightingPlugin />
         {isTouchViewport ? (
           <MobileSelectionToolbar

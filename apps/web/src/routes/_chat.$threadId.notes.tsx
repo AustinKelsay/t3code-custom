@@ -1,6 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import ThreadNotesPage from "../components/ThreadNotesPage";
 import { ThreadPageHeader } from "../components/chat/ThreadPageHeader";
 import {
@@ -24,6 +24,8 @@ function ThreadNotesRouteView() {
     thread: activeThread,
     projectTargetId: activeProject?.targetId ?? null,
   });
+  const headerRef = useRef<HTMLElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -35,6 +37,34 @@ function ThreadNotesRouteView() {
     }
   }, [navigate, routeThreadExists, threadsHydrated]);
 
+  useLayoutEffect(() => {
+    const headerElement = headerRef.current;
+    if (!headerElement) {
+      return;
+    }
+
+    const updateHeaderHeight = () => {
+      setHeaderHeight((currentHeight) => {
+        const nextHeight = Math.round(headerElement.getBoundingClientRect().height);
+        return currentHeight === nextHeight ? currentHeight : nextHeight;
+      });
+    };
+
+    updateHeaderHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateHeaderHeight();
+    });
+    observer.observe(headerElement);
+    return () => {
+      observer.disconnect();
+    };
+  }, [activeProject?.color, activeThread?.id, activeThread?.title]);
+
   if (!threadsHydrated || !routeThreadExists || !activeThread) {
     return null;
   }
@@ -42,10 +72,16 @@ function ThreadNotesRouteView() {
   return (
     <SidebarInset
       className="min-h-0 overflow-y-auto overscroll-y-contain bg-background text-foreground"
-      style={{ height: APP_VIEWPORT_CSS_HEIGHT }}
+      style={
+        {
+          "--thread-notes-header-height": `${headerHeight}px`,
+          height: APP_VIEWPORT_CSS_HEIGHT,
+        } as CSSProperties
+      }
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <header
+          ref={headerRef}
           className={resolveProjectHeaderClassName(
             "sticky top-0 z-30 border-b px-3 py-2 backdrop-blur sm:px-5 sm:py-3",
             activeProject?.color ?? null,
