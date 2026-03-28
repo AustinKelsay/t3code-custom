@@ -313,6 +313,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           updatedAt: proposedPlan.updatedAt,
         })),
         error: thread.session?.lastError ?? null,
+        pinnedAt: thread.pinnedAt,
+        sortOrder: thread.sortOrder,
         createdAt: thread.createdAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,

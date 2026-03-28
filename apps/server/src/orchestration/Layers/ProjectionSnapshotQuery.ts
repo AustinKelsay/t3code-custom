@@ -168,12 +168,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          pinned_at AS "pinnedAt",
+          sort_order AS "sortOrder",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
-        ORDER BY created_at ASC, thread_id ASC
+        ORDER BY
+          CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
+          CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END ASC,
+          sort_order DESC,
+          created_at DESC,
+          thread_id DESC
       `,
   });
 
@@ -559,6 +566,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             interactionMode: row.interactionMode,
             branch: row.branch,
             worktreePath: row.worktreePath,
+            pinnedAt: row.pinnedAt,
+            sortOrder: row.sortOrder,
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

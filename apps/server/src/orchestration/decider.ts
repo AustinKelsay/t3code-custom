@@ -167,6 +167,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          pinnedAt: command.pinnedAt,
+          sortOrder: command.sortOrder ?? Date.parse(command.createdAt),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -216,6 +218,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.pinnedAt !== undefined ? { pinnedAt: command.pinnedAt } : {}),
+          ...(command.sortOrder !== undefined ? { sortOrder: command.sortOrder } : {}),
           updatedAt: occurredAt,
         },
       };

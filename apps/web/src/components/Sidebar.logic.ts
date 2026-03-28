@@ -1,4 +1,4 @@
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -8,6 +8,12 @@ import {
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+
+export interface SidebarProjectFilterResult {
+  project: Project;
+  threads: Thread[];
+  projectMatched: boolean;
+}
 
 export interface ThreadStatusPill {
   label:
@@ -177,4 +183,39 @@ export function resolveProjectStatusIndicator(
   }
 
   return highestPriorityStatus;
+}
+
+function normalizeSidebarFilter(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+export function filterSidebarProjects(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  filterText: string;
+}): SidebarProjectFilterResult[] {
+  const normalizedFilter = normalizeSidebarFilter(input.filterText);
+  if (normalizedFilter.length === 0) {
+    return input.projects.map((project) => ({
+      project,
+      threads: input.threads.filter((thread) => thread.projectId === project.id),
+      projectMatched: false,
+    }));
+  }
+
+  return input.projects.flatMap((project) => {
+    const projectThreads = input.threads.filter((thread) => thread.projectId === project.id);
+    const projectMatched = project.name.toLocaleLowerCase().includes(normalizedFilter);
+    const matchingThreads = projectMatched
+      ? projectThreads
+      : projectThreads.filter((thread) =>
+          thread.title.toLocaleLowerCase().includes(normalizedFilter),
+        );
+
+    if (!projectMatched && matchingThreads.length === 0) {
+      return [];
+    }
+
+    return [{ project, threads: matchingThreads, projectMatched }];
+  });
 }

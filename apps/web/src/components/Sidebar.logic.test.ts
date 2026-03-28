@@ -1,7 +1,9 @@
 import { LOCAL_EXECUTION_TARGET_ID } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
+import type { Project, Thread } from "../types";
 
 import {
+  filterSidebarProjects,
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -9,6 +11,46 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: "project-1" as never,
+    name: "Alpha Project",
+    cwd: "/tmp/project",
+    targetId: LOCAL_EXECUTION_TARGET_ID,
+    model: "gpt-5",
+    color: null,
+    expanded: true,
+    scripts: [],
+    ...overrides,
+  };
+}
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: "thread-1" as never,
+    codexThreadId: null,
+    projectId: "project-1" as never,
+    targetId: LOCAL_EXECUTION_TARGET_ID,
+    title: "Fix auth bug",
+    model: "gpt-5",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    pinnedAt: null,
+    sortOrder: 1,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
+    ...overrides,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -82,6 +124,61 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("filterSidebarProjects", () => {
+  it("returns all projects and their threads when the filter is empty", () => {
+    const project = makeProject();
+    const thread = makeThread();
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads: [thread],
+        filterText: "   ",
+      }),
+    ).toEqual([{ project, threads: [thread], projectMatched: false }]);
+  });
+
+  it("matches a project name and keeps all of its threads", () => {
+    const project = makeProject({ name: "Payments API" });
+    const threads = [
+      makeThread({ id: "thread-1" as never, title: "Investigate retry bug" }),
+      makeThread({ id: "thread-2" as never, title: "Refactor webhooks" }),
+    ];
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads,
+        filterText: "payments",
+      }),
+    ).toEqual([{ project, threads, projectMatched: true }]);
+  });
+
+  it("matches thread titles and narrows a project to only those threads", () => {
+    const project = makeProject();
+    const matchingThread = makeThread({ id: "thread-1" as never, title: "Fix auth bug" });
+    const otherThread = makeThread({ id: "thread-2" as never, title: "Update docs" });
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads: [matchingThread, otherThread],
+        filterText: "auth",
+      }),
+    ).toEqual([{ project, threads: [matchingThread], projectMatched: false }]);
+  });
+
+  it("omits projects with no matching project name or thread title", () => {
+    expect(
+      filterSidebarProjects({
+        projects: [makeProject()],
+        threads: [makeThread()],
+        filterText: "does-not-exist",
+      }),
+    ).toEqual([]);
   });
 });
 

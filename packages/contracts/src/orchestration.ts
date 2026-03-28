@@ -291,6 +291,8 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pinnedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  sortOrder: Schema.NullOr(Schema.Int).pipe(Schema.withDecodingDefault(() => null)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -360,6 +362,12 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pinnedAt: Schema.optional(
+    Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  ),
+  sortOrder: Schema.optional(
+    Schema.NullOr(Schema.Int).pipe(Schema.withDecodingDefault(() => null)),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -377,6 +385,8 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  sortOrder: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -673,6 +683,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pinnedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  sortOrder: Schema.NullOr(Schema.Int).pipe(Schema.withDecodingDefault(() => null)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -688,6 +700,8 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  sortOrder: Schema.optional(Schema.NullOr(Schema.Int)),
   updatedAt: IsoDateTime,
 });
 

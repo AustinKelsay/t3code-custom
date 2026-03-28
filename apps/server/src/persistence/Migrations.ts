@@ -34,6 +34,7 @@ import Migration0019 from "./Migrations/019_ProjectionTurnsSourceProposedPlan.ts
 import Migration0020 from "./Migrations/020_ProjectColor.ts";
 import Migration0021 from "./Migrations/021_LegacyMigrationRepair.ts";
 import { Effect } from "effect";
+import Migration0022 from "./Migrations/022_ProjectionThreadOrdering.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -67,6 +68,7 @@ const loader = Migrator.fromRecord({
   "19_ProjectionTurnsSourceProposedPlan": Migration0019,
   "20_ProjectColor": Migration0020,
   "21_LegacyMigrationRepair": Migration0021,
+  "22_ProjectionThreadOrdering": Migration0022,
 });
 
 /**
