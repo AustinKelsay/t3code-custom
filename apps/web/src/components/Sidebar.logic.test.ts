@@ -5,11 +5,14 @@ import type { Project, Thread } from "../types";
 import {
   filterSidebarProjects,
   getVisibleThreadsForProject,
+  getProjectSortTimestamp,
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  sortSidebarProjectResults,
+  sortThreadsForSidebar,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 
@@ -45,6 +48,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     pinnedAt: null,
     sortOrder: 1,
     createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
@@ -242,6 +246,199 @@ describe("getVisibleThreadsForProject", () => {
       hasHiddenThreads: true,
       visibleThreads: [threads[0]!, threads[1]!],
     });
+  });
+});
+
+describe("sortThreadsForSidebar", () => {
+  it("preserves manual ordering", () => {
+    const threads = [
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-1" as never }),
+    ];
+
+    expect(sortThreadsForSidebar(threads, "manual").map((thread) => thread.id)).toEqual([
+      "thread-2",
+      "thread-1",
+    ]);
+  });
+
+  it("sorts threads by latest user message for updated_at", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "older",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+          messages: [
+            {
+              id: "message-2" as never,
+              role: "user",
+              text: "newer",
+              createdAt: "2026-03-09T10:06:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:06:00.000Z",
+            },
+          ],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-2", "thread-1"]);
+  });
+
+  it("keeps pinned threads above recency-sorted threads", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "older pinned thread",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          pinnedAt: null,
+          messages: [
+            {
+              id: "message-2" as never,
+              role: "user",
+              text: "newer unpinned thread",
+              createdAt: "2026-03-09T10:06:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:06:00.000Z",
+            },
+          ],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+
+  it("sorts threads by createdAt for created_at", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          createdAt: "2026-03-09T10:05:00.000Z",
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          createdAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      "created_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
+describe("sortSidebarProjectResults", () => {
+  it("preserves manual project ordering", () => {
+    const results = [
+      {
+        project: makeProject({ id: "project-2" as never, name: "Second" }),
+        threads: [],
+        projectMatched: false,
+      },
+      {
+        project: makeProject({ id: "project-1" as never, name: "First" }),
+        threads: [],
+        projectMatched: false,
+      },
+    ];
+
+    expect(sortSidebarProjectResults(results, "manual").map((entry) => entry.project.id)).toEqual([
+      "project-2",
+      "project-1",
+    ]);
+  });
+
+  it("sorts projects by most recent thread activity", () => {
+    const results = [
+      {
+        project: makeProject({ id: "project-1" as never, name: "Older project" }),
+        threads: [
+          makeThread({
+            projectId: "project-1" as never,
+            messages: [
+              {
+                id: "message-1" as never,
+                role: "user",
+                text: "older",
+                createdAt: "2026-03-09T10:01:00.000Z",
+                streaming: false,
+                completedAt: "2026-03-09T10:01:00.000Z",
+              },
+            ],
+          }),
+        ],
+        projectMatched: false,
+      },
+      {
+        project: makeProject({ id: "project-2" as never, name: "Newer project" }),
+        threads: [
+          makeThread({
+            id: "thread-2" as never,
+            projectId: "project-2" as never,
+            messages: [
+              {
+                id: "message-2" as never,
+                role: "user",
+                text: "newer",
+                createdAt: "2026-03-09T10:05:00.000Z",
+                streaming: false,
+                completedAt: "2026-03-09T10:05:00.000Z",
+              },
+            ],
+          }),
+        ],
+        projectMatched: false,
+      },
+    ];
+
+    expect(
+      sortSidebarProjectResults(results, "updated_at").map((entry) => entry.project.id),
+    ).toEqual(["project-2", "project-1"]);
+  });
+
+  it("returns a project timestamp when no threads are present", () => {
+    expect(
+      getProjectSortTimestamp(
+        makeProject({
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        [],
+        "updated_at",
+      ),
+    ).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
   });
 });
 

@@ -96,6 +96,8 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { resolveServerHttpOrigin } from "../lib/serverUrl";
 import {
+  sortSidebarProjectResults,
+  sortThreadsForSidebar,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -309,6 +311,8 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
+  const isProjectSortManual = appSettings.sidebarProjectSortOrder === "manual";
+  const isThreadSortManual = appSettings.sidebarThreadSortOrder === "manual";
   const { activeDraftThread, handleNewThread, routeThreadId } = useHandleNewThread();
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
@@ -1225,6 +1229,7 @@ export default function Sidebar() {
 
   const handleProjectDragEnd = useCallback(
     (event: DragEndEvent) => {
+      if (!isProjectSortManual) return;
       dragInProgressRef.current = false;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
@@ -1233,7 +1238,7 @@ export default function Sidebar() {
       if (!activeProject || !overProject) return;
       reorderProjects(activeProject.id, overProject.id);
     },
-    [projects, reorderProjects],
+    [isProjectSortManual, projects, reorderProjects],
   );
 
   const handleProjectDragStart = useCallback((_event: DragStartEvent) => {
@@ -1247,6 +1252,7 @@ export default function Sidebar() {
 
   const handleThreadDragEnd = useCallback(
     async (projectId: ProjectId, event: DragEndEvent) => {
+      if (!isThreadSortManual) return;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
 
@@ -1269,7 +1275,7 @@ export default function Sidebar() {
 
       await persistThreadOrder(reorderedThreads);
     },
-    [persistThreadOrder, threads],
+    [isThreadSortManual, persistThreadOrder, threads],
   );
 
   const handleProjectTitlePointerDownCapture = useCallback(() => {
@@ -1452,12 +1458,15 @@ export default function Sidebar() {
   );
   const filteredProjects = useMemo(
     () =>
-      filterSidebarProjects({
-        projects,
-        threads,
-        filterText: sidebarFilter,
-      }),
-    [projects, sidebarFilter, threads],
+      sortSidebarProjectResults(
+        filterSidebarProjects({
+          projects,
+          threads,
+          filterText: sidebarFilter,
+        }),
+        appSettings.sidebarProjectSortOrder,
+      ),
+    [appSettings.sidebarProjectSortOrder, projects, sidebarFilter, threads],
   );
   const hasSidebarFilter = sidebarFilter.trim().length > 0;
 
@@ -1858,11 +1867,13 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {filteredProjects.map(({ project, threads: filteredProjectThreads }) => {
-                  const projectThreads = sortThreadsForProject(
+                  const projectThreads = sortThreadsForSidebar(
                     filteredProjectThreads.filter((thread) => (thread.archivedAt ?? null) === null),
+                    appSettings.sidebarThreadSortOrder,
                   );
-                  const archivedProjectThreads = sortThreadsForProject(
+                  const archivedProjectThreads = sortThreadsForSidebar(
                     filteredProjectThreads.filter((thread) => (thread.archivedAt ?? null) !== null),
+                    appSettings.sidebarThreadSortOrder,
                   );
                   const projectStatus = resolveProjectStatusIndicator(
                     projectThreads.map((thread) =>
@@ -1905,9 +1916,11 @@ export default function Sidebar() {
                           <div className="group/project-header relative">
                             <SidebarMenuButton
                               size="sm"
-                              className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
-                              {...dragHandleProps.attributes}
-                              {...dragHandleProps.listeners}
+                              className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+                                isProjectSortManual ? "cursor-grab active:cursor-grabbing" : ""
+                              }`}
+                              {...(isProjectSortManual ? dragHandleProps.attributes : ({} as any))}
+                              {...(isProjectSortManual ? dragHandleProps.listeners : ({} as any))}
                               onPointerDownCapture={handleProjectTitlePointerDownCapture}
                               onClick={(event) => handleProjectTitleClick(event, project.id)}
                               onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
@@ -2189,19 +2202,21 @@ export default function Sidebar() {
                                                     />
                                                   </span>
                                                 )}
-                                                <button
-                                                  type="button"
-                                                  aria-label={`Reorder ${thread.title}`}
-                                                  className={`inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/45 hover:bg-accent hover:text-foreground ${isDragging ? "text-foreground" : ""}`}
-                                                  onClick={(event) => {
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                  }}
-                                                  {...handleProps.attributes}
-                                                  {...handleProps.listeners}
-                                                >
-                                                  <GripVerticalIcon className="size-3" />
-                                                </button>
+                                                {isThreadSortManual ? (
+                                                  <button
+                                                    type="button"
+                                                    aria-label={`Reorder ${thread.title}`}
+                                                    className={`inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/45 hover:bg-accent hover:text-foreground ${isDragging ? "text-foreground" : ""}`}
+                                                    onClick={(event) => {
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                    }}
+                                                    {...handleProps.attributes}
+                                                    {...handleProps.listeners}
+                                                  >
+                                                    <GripVerticalIcon className="size-3" />
+                                                  </button>
+                                                ) : null}
                                                 <span
                                                   className={`text-[10px] ${
                                                     isHighlighted

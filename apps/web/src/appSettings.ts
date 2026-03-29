@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { Option, Schema } from "effect";
-import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
+import {
+  TrimmedNonEmptyString,
+  type ProviderKind,
+  type ProviderStartOptions,
+} from "@t3tools/contracts";
 import {
   getDefaultModel,
   getModelOptions,
@@ -19,6 +23,12 @@ export const MAX_CUSTOM_MODEL_LENGTH = 256;
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
+export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
+export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "manual";
+export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
+export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
+export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "manual";
 export const VoicePlaybackRate = Schema.Literals(["0.75", "1.0", "1.25", "1.5", "1.75", "2.0"]);
 export type VoicePlaybackRate = typeof VoicePlaybackRate.Type;
 export const VoiceSilenceDuration = Schema.Literals(["1.5", "2.0", "2.5", "3.0", "4.0"]);
@@ -57,12 +67,19 @@ const withDefaults =
     );
 
 export const AppSettingsSchema = Schema.Struct({
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   diffWordWrap: Schema.Boolean.pipe(withDefaults(() => false)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
+  sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
+    withDefaults(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
+  ),
+  sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
+    withDefaults(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
+  ),
   voiceEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceInputEnabled: Schema.Boolean.pipe(withDefaults(() => true)),
   voiceWakePhraseEnabled: Schema.Boolean.pipe(withDefaults(() => false)),
@@ -277,6 +294,30 @@ export function resolveVoiceSilenceDurationMs(value: string | null | undefined):
     return DEFAULT_VOICE_SILENCE_DURATION_MS;
   }
   return parsedValue;
+}
+
+export function getProviderStartOptions(
+  settings: Pick<AppSettings, "claudeBinaryPath" | "codexBinaryPath" | "codexHomePath">,
+): ProviderStartOptions | undefined {
+  const providerOptions: ProviderStartOptions = {
+    ...(settings.codexBinaryPath || settings.codexHomePath
+      ? {
+          codex: {
+            ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
+            ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
+          },
+        }
+      : {}),
+    ...(settings.claudeBinaryPath
+      ? {
+          claudeAgent: {
+            binaryPath: settings.claudeBinaryPath,
+          },
+        }
+      : {}),
+  };
+
+  return Object.keys(providerOptions).length > 0 ? providerOptions : undefined;
 }
 
 export function useAppSettings() {

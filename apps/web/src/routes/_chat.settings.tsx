@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
+import { ChevronDownIcon, RotateCcwIcon } from "lucide-react";
 import {
   LOCAL_EXECUTION_TARGET_ID,
   type ExecutionTarget,
@@ -10,12 +11,16 @@ import {
 } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   getAppModelOptions,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
+  type SidebarProjectSortOrder,
+  type SidebarThreadSortOrder,
   useAppSettings,
   type VoicePlaybackRate,
   type VoiceSilenceDuration,
@@ -30,11 +35,12 @@ import {
   executionTargetQueryKeys,
 } from "../lib/executionTargetReactQuery";
 import { portForwardListQueryOptions, portForwardQueryKeys } from "../lib/portForwardReactQuery";
-import { ensureNativeApi } from "../nativeApi";
+import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import { APP_VIEWPORT_CSS_HEIGHT } from "../lib/viewport";
 import { useAudioInputDevices } from "../voice/useAudioInputDevices";
 import { REALTIME_VOICE_OPTIONS } from "../voice/realtimeVoice";
 import { Button } from "../components/ui/button";
+import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
 import {
   Select,
@@ -46,6 +52,7 @@ import {
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
+import { cn } from "../lib/utils";
 import { SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -88,6 +95,16 @@ const UI_SCALE_LABELS = {
   xl: "XL",
   xxl: "XXL",
 } as const;
+const SIDEBAR_PROJECT_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
+  manual: "Manual",
+  updated_at: "Last user message",
+  created_at: "Created at",
+};
+const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
+  manual: "Manual",
+  updated_at: "Last user message",
+  created_at: "Created at",
+};
 const VOICE_PLAYBACK_RATE_LABELS: Record<VoicePlaybackRate, string> = {
   "0.75": "0.75x",
   "1.0": "1.0x",
@@ -103,10 +120,48 @@ const VOICE_SILENCE_DURATION_LABELS: Record<VoiceSilenceDuration, string> = {
   "3.0": "3.0s",
   "4.0": "4.0s",
 };
+type InstallProviderSettings = {
+  provider: ProviderKind;
+  title: string;
+  binaryPathKey: "claudeBinaryPath" | "codexBinaryPath";
+  binaryPlaceholder: string;
+  binaryDescription: ReactNode;
+  homePathKey?: "codexHomePath";
+  homePlaceholder?: string;
+  homeDescription?: ReactNode;
+};
+
+const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
+  {
+    provider: "codex",
+    title: "Codex",
+    binaryPathKey: "codexBinaryPath",
+    binaryPlaceholder: "Codex binary path",
+    binaryDescription: (
+      <>
+        Leave blank to use <code>codex</code> from your PATH.
+      </>
+    ),
+    homePathKey: "codexHomePath",
+    homePlaceholder: "/Users/you/.codex",
+    homeDescription: "Optional custom Codex home/config directory.",
+  },
+  {
+    provider: "claudeAgent",
+    title: "Claude",
+    binaryPathKey: "claudeBinaryPath",
+    binaryPlaceholder: "Claude binary path",
+    binaryDescription: (
+      <>
+        Leave blank to use <code>claude</code> from your PATH.
+      </>
+    ),
+  },
+] as const;
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const { settings, defaults, updateSettings } = useAppSettings();
+  const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
   const audioInputDevices = useAudioInputDevices();
   const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -143,7 +198,12 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
+    codex: Boolean(settings.codexBinaryPath || settings.codexHomePath),
+    claudeAgent: Boolean(settings.claudeBinaryPath),
+  });
 
+  const claudeBinaryPath = settings.claudeBinaryPath;
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
@@ -399,31 +459,71 @@ function SettingsRouteView() {
     [settings, updateSettings],
   );
 
+  const restoreDefaults = useCallback(async () => {
+    const api = readNativeApi() ?? ensureNativeApi();
+    const confirmed = await api.dialogs.confirm(
+      "Restore default settings for this device? This resets theme and all app-level preferences.",
+    );
+    if (!confirmed) return;
+
+    setTheme("system");
+    resetSettings();
+    setCustomModelInputByProvider({
+      codex: "",
+      claudeAgent: "",
+    });
+    setCustomModelErrorByProvider({});
+    setOpenInstallProviders({
+      codex: false,
+      claudeAgent: false,
+    });
+  }, [resetSettings, setTheme]);
+
   return (
     <SidebarInset
       className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate"
       style={{ height: APP_VIEWPORT_CSS_HEIGHT }}
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+        {!isElectron && (
+          <header className="border-b border-border px-3 py-2 sm:px-5">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+              <span className="text-sm font-medium text-foreground">Settings</span>
+              <div className="ms-auto flex items-center gap-2">
+                <Button size="xs" variant="outline" onClick={() => void restoreDefaults()}>
+                  <RotateCcwIcon className="size-3.5" />
+                  Restore defaults
+                </Button>
+              </div>
+            </div>
+          </header>
+        )}
+
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
+            <div className="ms-auto flex items-center gap-2">
+              <Button size="xs" variant="outline" onClick={() => void restoreDefaults()}>
+                <RotateCcwIcon className="size-3.5" />
+                Restore defaults
+              </Button>
+            </div>
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            <header className="flex items-start gap-3">
-              <SidebarTrigger className="size-7 shrink-0" />
-              <div className="space-y-1">
+            {isElectron ? (
+              <header className="space-y-1">
                 <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
                 <p className="text-sm text-muted-foreground">
                   Configure app-level preferences for this device.
                 </p>
-              </div>
-            </header>
+              </header>
+            ) : null}
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
@@ -546,9 +646,81 @@ function SettingsRouteView() {
                   />
                 </div>
 
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Sidebar project order</p>
+                    <p className="text-xs text-muted-foreground">
+                      Choose whether projects stay manually arranged or sort by recency.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.sidebarProjectSortOrder}
+                    onValueChange={(value) => {
+                      if (value !== "manual" && value !== "updated_at" && value !== "created_at") {
+                        return;
+                      }
+                      updateSettings({
+                        sidebarProjectSortOrder: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-40" aria-label="Sidebar project order">
+                      <SelectValue>
+                        {SIDEBAR_PROJECT_SORT_LABELS[settings.sidebarProjectSortOrder]}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end">
+                      <SelectItem value="manual">{SIDEBAR_PROJECT_SORT_LABELS.manual}</SelectItem>
+                      <SelectItem value="updated_at">
+                        {SIDEBAR_PROJECT_SORT_LABELS.updated_at}
+                      </SelectItem>
+                      <SelectItem value="created_at">
+                        {SIDEBAR_PROJECT_SORT_LABELS.created_at}
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Sidebar thread order</p>
+                    <p className="text-xs text-muted-foreground">
+                      Choose whether threads stay manually arranged or sort by recency.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.sidebarThreadSortOrder}
+                    onValueChange={(value) => {
+                      if (value !== "manual" && value !== "updated_at" && value !== "created_at") {
+                        return;
+                      }
+                      updateSettings({
+                        sidebarThreadSortOrder: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-40" aria-label="Sidebar thread order">
+                      <SelectValue>
+                        {SIDEBAR_THREAD_SORT_LABELS[settings.sidebarThreadSortOrder]}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end">
+                      <SelectItem value="manual">{SIDEBAR_THREAD_SORT_LABELS.manual}</SelectItem>
+                      <SelectItem value="updated_at">
+                        {SIDEBAR_THREAD_SORT_LABELS.updated_at}
+                      </SelectItem>
+                      <SelectItem value="created_at">
+                        {SIDEBAR_THREAD_SORT_LABELS.created_at}
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                </div>
+
                 {settings.timestampFormat !== defaults.timestampFormat ||
                 settings.uiScale !== defaults.uiScale ||
-                settings.diffWordWrap !== defaults.diffWordWrap ? (
+                settings.diffWordWrap !== defaults.diffWordWrap ||
+                settings.sidebarProjectSortOrder !== defaults.sidebarProjectSortOrder ||
+                settings.sidebarThreadSortOrder !== defaults.sidebarThreadSortOrder ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -558,6 +730,10 @@ function SettingsRouteView() {
                           timestampFormat: defaults.timestampFormat,
                           uiScale: defaults.uiScale,
                           diffWordWrap: defaults.diffWordWrap,
+                          sidebarProjectSortOrder:
+                            defaults.sidebarProjectSortOrder ?? DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+                          sidebarThreadSortOrder:
+                            defaults.sidebarThreadSortOrder ?? DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
                         })
                       }
                     >
@@ -907,62 +1083,148 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
+                <h2 className="text-sm font-medium text-foreground">Provider installs</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
+                  These overrides apply to new sessions and let you use non-default Codex or Claude
+                  installs.
                 </p>
               </div>
 
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
+              <div className="space-y-3">
+                {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
+                  const isOpen = openInstallProviders[providerSettings.provider];
+                  const binaryPathValue =
+                    providerSettings.binaryPathKey === "claudeBinaryPath"
+                      ? claudeBinaryPath
+                      : codexBinaryPath;
+                  const isDirty =
+                    providerSettings.provider === "codex"
+                      ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
+                        settings.codexHomePath !== defaults.codexHomePath
+                      : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
 
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
+                  return (
+                    <Collapsible
+                      key={providerSettings.provider}
+                      open={isOpen}
+                      onOpenChange={(open) =>
+                        setOpenInstallProviders((existing) => ({
+                          ...existing,
+                          [providerSettings.provider]: open,
+                        }))
+                      }
+                    >
+                      <div className="overflow-hidden rounded-xl border border-border/70">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                          onClick={() =>
+                            setOpenInstallProviders((existing) => ({
+                              ...existing,
+                              [providerSettings.provider]: !existing[providerSettings.provider],
+                            }))
+                          }
+                        >
+                          <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                            {providerSettings.title}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {binaryPathValue || "PATH"}
+                          </span>
+                          {providerSettings.homePathKey && codexHomePath ? (
+                            <span className="text-[11px] text-muted-foreground">Custom home</span>
+                          ) : null}
+                          {isDirty ? (
+                            <span className="text-[11px] text-muted-foreground">Custom</span>
+                          ) : null}
+                          <ChevronDownIcon
+                            className={cn(
+                              "size-4 shrink-0 text-muted-foreground transition-transform",
+                              isOpen && "rotate-180",
+                            )}
+                          />
+                        </button>
 
-                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <p>Binary source</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-foreground">
-                      {codexBinaryPath || "PATH"}
-                    </p>
-                  </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="self-start"
-                    onClick={() =>
-                      updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
-                      })
-                    }
-                  >
-                    Reset codex overrides
-                  </Button>
-                </div>
+                        <CollapsibleContent>
+                          <div className="border-t border-border/70 px-4 py-4">
+                            <div className="space-y-3">
+                              <label
+                                htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
+                                className="block space-y-1"
+                              >
+                                <span className="text-xs font-medium text-foreground">
+                                  {providerSettings.title} binary path
+                                </span>
+                                <Input
+                                  id={`provider-install-${providerSettings.binaryPathKey}`}
+                                  value={binaryPathValue}
+                                  onChange={(event) =>
+                                    updateSettings(
+                                      providerSettings.binaryPathKey === "claudeBinaryPath"
+                                        ? { claudeBinaryPath: event.target.value }
+                                        : { codexBinaryPath: event.target.value },
+                                    )
+                                  }
+                                  placeholder={providerSettings.binaryPlaceholder}
+                                  spellCheck={false}
+                                />
+                                <span className="text-xs text-muted-foreground">
+                                  {providerSettings.binaryDescription}
+                                </span>
+                              </label>
+
+                              {providerSettings.homePathKey ? (
+                                <label
+                                  htmlFor={`provider-install-${providerSettings.homePathKey}`}
+                                  className="block space-y-1"
+                                >
+                                  <span className="text-xs font-medium text-foreground">
+                                    CODEX_HOME path
+                                  </span>
+                                  <Input
+                                    id={`provider-install-${providerSettings.homePathKey}`}
+                                    value={codexHomePath}
+                                    onChange={(event) =>
+                                      updateSettings({ codexHomePath: event.target.value })
+                                    }
+                                    placeholder={providerSettings.homePlaceholder}
+                                    spellCheck={false}
+                                  />
+                                  {providerSettings.homeDescription ? (
+                                    <span className="text-xs text-muted-foreground">
+                                      {providerSettings.homeDescription}
+                                    </span>
+                                  ) : null}
+                                </label>
+                              ) : null}
+
+                              <div className="flex justify-end">
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() =>
+                                    updateSettings(
+                                      providerSettings.provider === "codex"
+                                        ? {
+                                            codexBinaryPath: defaults.codexBinaryPath,
+                                            codexHomePath: defaults.codexHomePath,
+                                          }
+                                        : {
+                                            claudeBinaryPath: defaults.claudeBinaryPath,
+                                          },
+                                    )
+                                  }
+                                >
+                                  Reset {providerSettings.title.toLowerCase()} overrides
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CollapsibleContent>
+                      </div>
+                    </Collapsible>
+                  );
+                })}
               </div>
             </section>
 

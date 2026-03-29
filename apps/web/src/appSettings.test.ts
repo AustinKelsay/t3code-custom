@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppSettingsSchema,
-  DEFAULT_VOICE_INSTRUCTIONS,
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   DEFAULT_TIMESTAMP_FORMAT,
+  DEFAULT_VOICE_INSTRUCTIONS,
   getAppModelOptions,
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
+  getProviderStartOptions,
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
   patchCustomModels,
@@ -113,6 +116,16 @@ describe("timestamp format defaults", () => {
   });
 });
 
+describe("sidebar sort defaults", () => {
+  it("defaults project sorting to manual", () => {
+    expect(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER).toBe("manual");
+  });
+
+  it("defaults thread sorting to manual", () => {
+    expect(DEFAULT_SIDEBAR_THREAD_SORT_ORDER).toBe("manual");
+  });
+});
+
 describe("provider-specific custom models", () => {
   it("includes provider-specific custom slugs in non-codex model lists", () => {
     const claudeOptions = getAppModelOptions("claudeAgent", ["claude/custom-opus"]);
@@ -212,12 +225,15 @@ describe("AppSettingsSchema", () => {
         }),
       ),
     ).toMatchObject({
+      claudeBinaryPath: "",
       codexBinaryPath: "/usr/local/bin/codex",
       codexHomePath: "",
       defaultThreadEnvMode: "local",
       confirmThreadDelete: false,
       diffWordWrap: false,
       enableAssistantStreaming: false,
+      sidebarProjectSortOrder: DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+      sidebarThreadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
       voiceEnabled: true,
       voiceInputEnabled: true,
       voiceAutoSpeakReplies: true,
@@ -243,5 +259,35 @@ describe("voice numeric settings", () => {
   it("preserves valid persisted voice values", () => {
     expect(resolveVoicePlaybackRateValue("1.75")).toBe(1.75);
     expect(resolveVoiceSilenceDurationMs("2.5")).toBe(2500);
+  });
+});
+
+describe("getProviderStartOptions", () => {
+  it("returns undefined when no provider install overrides are configured", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "",
+        codexBinaryPath: "",
+        codexHomePath: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns both codex and claude overrides when configured", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "/usr/local/bin/claude",
+        codexBinaryPath: "/usr/local/bin/codex",
+        codexHomePath: "/tmp/codex-home",
+      }),
+    ).toEqual({
+      claudeAgent: {
+        binaryPath: "/usr/local/bin/claude",
+      },
+      codex: {
+        binaryPath: "/usr/local/bin/codex",
+        homePath: "/tmp/codex-home",
+      },
+    });
   });
 });

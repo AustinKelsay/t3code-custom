@@ -1,3 +1,4 @@
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
 import type { Project, Thread } from "../types";
 import { cn } from "../lib/utils";
 import {
@@ -27,6 +28,9 @@ export interface ThreadStatusPill {
   dotClass: string;
   pulse: boolean;
 }
+
+type SidebarProject = Pick<Project, "id" | "name" | "createdAt" | "updatedAt">;
+type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages" | "pinnedAt">;
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
@@ -226,6 +230,101 @@ export function getVisibleThreadsForProject(input: {
     hasHiddenThreads: true,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+function toSortableTimestamp(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
+  let latestUserMessageTimestamp: number | null = null;
+
+  for (const message of thread.messages) {
+    if (message.role !== "user") continue;
+    const messageTimestamp = toSortableTimestamp(message.createdAt);
+    if (messageTimestamp === null) continue;
+    latestUserMessageTimestamp =
+      latestUserMessageTimestamp === null
+        ? messageTimestamp
+        : Math.max(latestUserMessageTimestamp, messageTimestamp);
+  }
+
+  if (latestUserMessageTimestamp !== null) {
+    return latestUserMessageTimestamp;
+  }
+
+  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+function getThreadSortTimestamp(
+  thread: SidebarThreadSortInput,
+  sortOrder: Exclude<SidebarThreadSortOrder, "manual"> | Exclude<SidebarProjectSortOrder, "manual">,
+): number {
+  if (sortOrder === "created_at") {
+    return toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+  }
+  return getLatestUserMessageTimestamp(thread);
+}
+
+export function sortThreadsForSidebar<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "messages" | "pinnedAt">,
+>(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
+  if (sortOrder === "manual") {
+    return [...threads];
+  }
+
+  return [...threads].toSorted((left, right) => {
+    const byPinnedState = Number(right.pinnedAt !== null) - Number(left.pinnedAt !== null);
+    if (byPinnedState !== 0) return byPinnedState;
+
+    const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
+    const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
+    const byTimestamp =
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+    if (byTimestamp !== 0) return byTimestamp;
+    return right.id.localeCompare(left.id);
+  });
+}
+
+export function getProjectSortTimestamp(
+  project: SidebarProject,
+  projectThreads: readonly SidebarThreadSortInput[],
+  sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
+): number {
+  if (projectThreads.length > 0) {
+    return projectThreads.reduce(
+      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
+      Number.NEGATIVE_INFINITY,
+    );
+  }
+
+  if (sortOrder === "created_at") {
+    return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
+  }
+  return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+export function sortSidebarProjectResults(
+  results: readonly SidebarProjectFilterResult[],
+  sortOrder: SidebarProjectSortOrder,
+): SidebarProjectFilterResult[] {
+  if (sortOrder === "manual") {
+    return [...results];
+  }
+
+  return [...results].toSorted((left, right) => {
+    const rightTimestamp = getProjectSortTimestamp(right.project, right.threads, sortOrder);
+    const leftTimestamp = getProjectSortTimestamp(left.project, left.threads, sortOrder);
+    const byTimestamp =
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+    if (byTimestamp !== 0) return byTimestamp;
+    return (
+      left.project.name.localeCompare(right.project.name) ||
+      left.project.id.localeCompare(right.project.id)
+    );
+  });
 }
 
 function normalizeSidebarFilter(value: string): string {
