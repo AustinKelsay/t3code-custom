@@ -229,6 +229,7 @@ describe("AppSettingsSchema", () => {
       codexBinaryPath: "/usr/local/bin/codex",
       codexHomePath: "",
       defaultThreadEnvMode: "local",
+      confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: false,
       enableAssistantStreaming: false,

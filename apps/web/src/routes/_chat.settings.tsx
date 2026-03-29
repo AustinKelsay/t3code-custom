@@ -15,7 +15,6 @@ import {
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   getAppModelOptions,
   getCustomModelsForProvider,
-  getDefaultCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
@@ -53,6 +52,8 @@ import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
 import { cn } from "../lib/utils";
+import { ArchivedThreadsSection } from "../components/settings/ArchivedThreadsSection";
+import { InPageSettingsNav } from "../components/settings/InPageSettingsNav";
 import { SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -159,6 +160,59 @@ const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   },
 ] as const;
 
+function SettingsSection({
+  id,
+  title,
+  children,
+}: {
+  id?: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} className="scroll-mt-4 space-y-3">
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {title}
+      </h2>
+      <div className="relative overflow-hidden rounded-2xl border bg-card not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function SettingsRow({
+  title,
+  description,
+  status,
+  control,
+  children,
+}: {
+  title: string;
+  description: string;
+  status?: ReactNode;
+  control?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1">
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+          <p className="text-xs text-muted-foreground">{description}</p>
+          {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
+        </div>
+        {control ? (
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {control}
+          </div>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
@@ -198,6 +252,9 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [selectedCustomModelProvider, setSelectedCustomModelProvider] =
+    useState<ProviderKind>("codex");
+  const [showAllCustomModels, setShowAllCustomModels] = useState(false);
   const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
     codex: Boolean(settings.codexBinaryPath || settings.codexHomePath),
     claudeAgent: Boolean(settings.claudeBinaryPath),
@@ -350,6 +407,25 @@ function SettingsRouteView() {
       (option) =>
         option.slug === (settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL),
     )?.name ?? settings.textGenerationModel;
+  const currentGitTextGenerationModel =
+    settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
+  const selectedCustomModelProviderSettings = MODEL_PROVIDER_SETTINGS.find(
+    (providerSettings) => providerSettings.provider === selectedCustomModelProvider,
+  )!;
+  const selectedCustomModelInput = customModelInputByProvider[selectedCustomModelProvider];
+  const selectedCustomModelError = customModelErrorByProvider[selectedCustomModelProvider] ?? null;
+  const totalCustomModels = settings.customCodexModels.length + settings.customClaudeModels.length;
+  const savedCustomModelRows = MODEL_PROVIDER_SETTINGS.flatMap((providerSettings) =>
+    getCustomModelsForProvider(settings, providerSettings.provider).map((slug) => ({
+      key: `${providerSettings.provider}:${slug}`,
+      provider: providerSettings.provider,
+      providerTitle: providerSettings.title,
+      slug,
+    })),
+  );
+  const visibleCustomModelRows = showAllCustomModels
+    ? savedCustomModelRows
+    : savedCustomModelRows.slice(0, 5);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -514,1344 +590,942 @@ function SettingsRouteView() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            {isElectron ? (
-              <header className="space-y-1">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
-                <p className="text-sm text-muted-foreground">
-                  Configure app-level preferences for this device.
-                </p>
-              </header>
-            ) : null}
+        <div data-settings-scroll-container className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-8">
+            <InPageSettingsNav />
+            <div className="flex min-w-0 flex-col gap-6">
+              {isElectron ? (
+                <header className="space-y-1">
+                  <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                    Settings
+                  </h1>
+                  <p className="text-sm text-muted-foreground">
+                    Configure app-level preferences for this device.
+                  </p>
+                </header>
+              ) : null}
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Appearance</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose how T3 Code looks across the app.
-                </p>
-              </div>
+              <section
+                id="appearance"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Appearance</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Choose how T3 Code looks across the app.
+                  </p>
+                </div>
 
-              <div className="space-y-4">
-                <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
-                  {THEME_OPTIONS.map((option) => {
-                    const selected = theme === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                          selected
-                            ? "border-primary/60 bg-primary/8 text-foreground"
-                            : "border-border bg-background text-muted-foreground hover:bg-accent"
-                        }`}
-                        onClick={() => setTheme(option.value)}
-                      >
-                        <span className="flex flex-col">
-                          <span className="text-sm font-medium">{option.label}</span>
-                          <span className="text-xs">{option.description}</span>
-                        </span>
-                        {selected ? (
-                          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                            Selected
+                <div className="space-y-4">
+                  <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
+                    {THEME_OPTIONS.map((option) => {
+                      const selected = theme === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() => setTheme(option.value)}
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{option.label}</span>
+                            <span className="text-xs">{option.description}</span>
                           </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-                </p>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Timestamp format</p>
-                    <p className="text-xs text-muted-foreground">
-                      System default follows your browser or OS time format. <code>12-hour</code>{" "}
-                      and <code>24-hour</code> force the hour cycle.
-                    </p>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <Select
-                    value={settings.timestampFormat}
-                    onValueChange={(value) => {
-                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") return;
-                      updateSettings({
-                        timestampFormat: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="Timestamp format">
-                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
-                      <SelectItem value="12-hour">{TIMESTAMP_FORMAT_LABELS["12-hour"]}</SelectItem>
-                      <SelectItem value="24-hour">{TIMESTAMP_FORMAT_LABELS["24-hour"]}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
 
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Font and button size</p>
-                    <p className="text-xs text-muted-foreground">
-                      Increases app font sizes and button sizes across the interface.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.uiScale}
-                    onValueChange={(value) => {
-                      if (!UI_SCALE_OPTIONS.includes(value as UiScale)) {
-                        return;
-                      }
-                      updateSettings({
-                        uiScale: value as UiScale,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="UI size">
-                      <SelectValue>{UI_SCALE_LABELS[settings.uiScale]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="small">{UI_SCALE_LABELS.small}</SelectItem>
-                      <SelectItem value="medium">{UI_SCALE_LABELS.medium}</SelectItem>
-                      <SelectItem value="large">{UI_SCALE_LABELS.large}</SelectItem>
-                      <SelectItem value="xl">{UI_SCALE_LABELS.xl}</SelectItem>
-                      <SelectItem value="xxl">{UI_SCALE_LABELS.xxl}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
+                  <p className="text-xs text-muted-foreground">
+                    Active theme:{" "}
+                    <span className="font-medium text-foreground">{resolvedTheme}</span>
+                  </p>
 
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Diff line wrapping</p>
-                    <p className="text-xs text-muted-foreground">
-                      Sets the default wrap state when the diff panel opens. The in-panel wrap
-                      toggle only affects the current diff session.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.diffWordWrap}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        diffWordWrap: Boolean(checked),
-                      })
-                    }
-                    aria-label="Wrap diff lines by default"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Sidebar project order</p>
-                    <p className="text-xs text-muted-foreground">
-                      Choose whether projects stay manually arranged or sort by recency.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.sidebarProjectSortOrder}
-                    onValueChange={(value) => {
-                      if (value !== "manual" && value !== "updated_at" && value !== "created_at") {
-                        return;
-                      }
-                      updateSettings({
-                        sidebarProjectSortOrder: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="Sidebar project order">
-                      <SelectValue>
-                        {SIDEBAR_PROJECT_SORT_LABELS[settings.sidebarProjectSortOrder]}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="manual">{SIDEBAR_PROJECT_SORT_LABELS.manual}</SelectItem>
-                      <SelectItem value="updated_at">
-                        {SIDEBAR_PROJECT_SORT_LABELS.updated_at}
-                      </SelectItem>
-                      <SelectItem value="created_at">
-                        {SIDEBAR_PROJECT_SORT_LABELS.created_at}
-                      </SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Sidebar thread order</p>
-                    <p className="text-xs text-muted-foreground">
-                      Choose whether threads stay manually arranged or sort by recency.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.sidebarThreadSortOrder}
-                    onValueChange={(value) => {
-                      if (value !== "manual" && value !== "updated_at" && value !== "created_at") {
-                        return;
-                      }
-                      updateSettings({
-                        sidebarThreadSortOrder: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="Sidebar thread order">
-                      <SelectValue>
-                        {SIDEBAR_THREAD_SORT_LABELS[settings.sidebarThreadSortOrder]}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="manual">{SIDEBAR_THREAD_SORT_LABELS.manual}</SelectItem>
-                      <SelectItem value="updated_at">
-                        {SIDEBAR_THREAD_SORT_LABELS.updated_at}
-                      </SelectItem>
-                      <SelectItem value="created_at">
-                        {SIDEBAR_THREAD_SORT_LABELS.created_at}
-                      </SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                {settings.timestampFormat !== defaults.timestampFormat ||
-                settings.uiScale !== defaults.uiScale ||
-                settings.diffWordWrap !== defaults.diffWordWrap ||
-                settings.sidebarProjectSortOrder !== defaults.sidebarProjectSortOrder ||
-                settings.sidebarThreadSortOrder !== defaults.sidebarThreadSortOrder ? (
-                  <div className="flex justify-end">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Timestamp format</p>
+                      <p className="text-xs text-muted-foreground">
+                        System default follows your browser or OS time format. <code>12-hour</code>{" "}
+                        and <code>24-hour</code> force the hour cycle.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.timestampFormat}
+                      onValueChange={(value) => {
+                        if (value !== "locale" && value !== "12-hour" && value !== "24-hour")
+                          return;
                         updateSettings({
-                          timestampFormat: defaults.timestampFormat,
-                          uiScale: defaults.uiScale,
-                          diffWordWrap: defaults.diffWordWrap,
-                          sidebarProjectSortOrder:
-                            defaults.sidebarProjectSortOrder ?? DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
-                          sidebarThreadSortOrder:
-                            defaults.sidebarThreadSortOrder ?? DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+                          timestampFormat: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40" aria-label="Timestamp format">
+                        <SelectValue>
+                          {TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
+                        <SelectItem value="12-hour">
+                          {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                        </SelectItem>
+                        <SelectItem value="24-hour">
+                          {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Font and button size</p>
+                      <p className="text-xs text-muted-foreground">
+                        Increases app font sizes and button sizes across the interface.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.uiScale}
+                      onValueChange={(value) => {
+                        if (!UI_SCALE_OPTIONS.includes(value as UiScale)) {
+                          return;
+                        }
+                        updateSettings({
+                          uiScale: value as UiScale,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40" aria-label="UI size">
+                        <SelectValue>{UI_SCALE_LABELS[settings.uiScale]}</SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="small">{UI_SCALE_LABELS.small}</SelectItem>
+                        <SelectItem value="medium">{UI_SCALE_LABELS.medium}</SelectItem>
+                        <SelectItem value="large">{UI_SCALE_LABELS.large}</SelectItem>
+                        <SelectItem value="xl">{UI_SCALE_LABELS.xl}</SelectItem>
+                        <SelectItem value="xxl">{UI_SCALE_LABELS.xxl}</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Diff line wrapping</p>
+                      <p className="text-xs text-muted-foreground">
+                        Sets the default wrap state when the diff panel opens. The in-panel wrap
+                        toggle only affects the current diff session.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.diffWordWrap}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          diffWordWrap: Boolean(checked),
                         })
                       }
-                    >
-                      Restore default
-                    </Button>
+                      aria-label="Wrap diff lines by default"
+                    />
                   </div>
-                ) : null}
-              </div>
-            </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Execution Targets</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Register remote machines for thread execution, remote Git, and provider startup.
-                </p>
-              </div>
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Sidebar project order</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose whether projects stay manually arranged or sort by recency.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.sidebarProjectSortOrder}
+                      onValueChange={(value) => {
+                        if (
+                          value !== "manual" &&
+                          value !== "updated_at" &&
+                          value !== "created_at"
+                        ) {
+                          return;
+                        }
+                        updateSettings({
+                          sidebarProjectSortOrder: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40" aria-label="Sidebar project order">
+                        <SelectValue>
+                          {SIDEBAR_PROJECT_SORT_LABELS[settings.sidebarProjectSortOrder]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="manual">{SIDEBAR_PROJECT_SORT_LABELS.manual}</SelectItem>
+                        <SelectItem value="updated_at">
+                          {SIDEBAR_PROJECT_SORT_LABELS.updated_at}
+                        </SelectItem>
+                        <SelectItem value="created_at">
+                          {SIDEBAR_PROJECT_SORT_LABELS.created_at}
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Label</span>
-                  <Input
-                    value={executionTargetLabel}
-                    onChange={(event) => setExecutionTargetLabel(event.target.value)}
-                    placeholder="Staging Box"
-                  />
-                </label>
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Sidebar thread order</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose whether threads stay manually arranged or sort by recency.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.sidebarThreadSortOrder}
+                      onValueChange={(value) => {
+                        if (
+                          value !== "manual" &&
+                          value !== "updated_at" &&
+                          value !== "created_at"
+                        ) {
+                          return;
+                        }
+                        updateSettings({
+                          sidebarThreadSortOrder: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40" aria-label="Sidebar thread order">
+                        <SelectValue>
+                          {SIDEBAR_THREAD_SORT_LABELS[settings.sidebarThreadSortOrder]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="manual">{SIDEBAR_THREAD_SORT_LABELS.manual}</SelectItem>
+                        <SelectItem value="updated_at">
+                          {SIDEBAR_THREAD_SORT_LABELS.updated_at}
+                        </SelectItem>
+                        <SelectItem value="created_at">
+                          {SIDEBAR_THREAD_SORT_LABELS.created_at}
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
 
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Host</span>
-                  <Input
-                    value={executionTargetHost}
-                    onChange={(event) => setExecutionTargetHost(event.target.value)}
-                    placeholder="staging.example.com"
-                  />
-                </label>
+                  {settings.timestampFormat !== defaults.timestampFormat ||
+                  settings.uiScale !== defaults.uiScale ||
+                  settings.diffWordWrap !== defaults.diffWordWrap ||
+                  settings.sidebarProjectSortOrder !== defaults.sidebarProjectSortOrder ||
+                  settings.sidebarThreadSortOrder !== defaults.sidebarThreadSortOrder ? (
+                    <div className="flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            timestampFormat: defaults.timestampFormat,
+                            uiScale: defaults.uiScale,
+                            diffWordWrap: defaults.diffWordWrap,
+                            sidebarProjectSortOrder:
+                              defaults.sidebarProjectSortOrder ??
+                              DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+                            sidebarThreadSortOrder:
+                              defaults.sidebarThreadSortOrder ?? DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
 
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">User</span>
-                  <Input
-                    value={executionTargetUser}
-                    onChange={(event) => setExecutionTargetUser(event.target.value)}
-                    placeholder="deploy"
-                  />
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Port</span>
-                  <Input
-                    value={executionTargetPort}
-                    onChange={(event) => setExecutionTargetPort(event.target.value)}
-                    inputMode="numeric"
-                    placeholder="22"
-                  />
-                </label>
-
-                <label className="block space-y-1 md:col-span-2">
-                  <span className="text-xs font-medium text-foreground">Password</span>
-                  <Input
-                    ref={executionTargetPasswordRef}
-                    nativeInput
-                    type="password"
-                    autoComplete="new-password"
-                    value={executionTargetPassword}
-                    onChange={(event) => setExecutionTargetPassword(event.target.value)}
-                    placeholder="Optional SSH password"
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Stored in the local app database. Leave blank while editing to keep the current
-                    password.
+              <section
+                id="remote-access"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Execution Targets</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Register remote machines for thread execution, remote Git, and provider startup.
                   </p>
-                </label>
+                </div>
 
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">
-                    Remote Claude binary path
-                  </span>
-                  <Input
-                    value={executionTargetClaudeBinaryPath}
-                    onChange={(event) => setExecutionTargetClaudeBinaryPath(event.target.value)}
-                    placeholder="claude"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional absolute path for Claude Code on this target.
-                  </span>
-                </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Label</span>
+                    <Input
+                      value={executionTargetLabel}
+                      onChange={(event) => setExecutionTargetLabel(event.target.value)}
+                      placeholder="Staging Box"
+                    />
+                  </label>
 
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">
-                    Remote Codex binary path
-                  </span>
-                  <Input
-                    value={executionTargetCodexBinaryPath}
-                    onChange={(event) => setExecutionTargetCodexBinaryPath(event.target.value)}
-                    placeholder="Auto-detect"
-                    spellCheck={false}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Optional override when the remote machine does not expose <code>codex</code> on
-                    its default login PATH.
-                  </p>
-                </label>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Host</span>
+                    <Input
+                      value={executionTargetHost}
+                      onChange={(event) => setExecutionTargetHost(event.target.value)}
+                      placeholder="staging.example.com"
+                    />
+                  </label>
 
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">
-                    Remote CODEX_HOME path
-                  </span>
-                  <Input
-                    value={executionTargetCodexHomePath}
-                    onChange={(event) => setExecutionTargetCodexHomePath(event.target.value)}
-                    placeholder="Optional"
-                    spellCheck={false}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Optional remote Codex config directory for this target only.
-                  </p>
-                </label>
-              </div>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">User</span>
+                    <Input
+                      value={executionTargetUser}
+                      onChange={(event) => setExecutionTargetUser(event.target.value)}
+                      placeholder="deploy"
+                    />
+                  </label>
 
-              <div className="mt-4 flex items-center gap-3">
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setExecutionTargetError(null);
-                    upsertExecutionTargetMutation.mutate();
-                  }}
-                  disabled={upsertExecutionTargetMutation.isPending}
-                >
-                  {editingExecutionTargetId ? "Save SSH Target" : "Add SSH Target"}
-                </Button>
-                {editingExecutionTargetId ? (
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Port</span>
+                    <Input
+                      value={executionTargetPort}
+                      onChange={(event) => setExecutionTargetPort(event.target.value)}
+                      inputMode="numeric"
+                      placeholder="22"
+                    />
+                  </label>
+
+                  <label className="block space-y-1 md:col-span-2">
+                    <span className="text-xs font-medium text-foreground">Password</span>
+                    <Input
+                      ref={executionTargetPasswordRef}
+                      nativeInput
+                      type="password"
+                      autoComplete="new-password"
+                      value={executionTargetPassword}
+                      onChange={(event) => setExecutionTargetPassword(event.target.value)}
+                      placeholder="Optional SSH password"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Stored in the local app database. Leave blank while editing to keep the
+                      current password.
+                    </p>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      Remote Claude binary path
+                    </span>
+                    <Input
+                      value={executionTargetClaudeBinaryPath}
+                      onChange={(event) => setExecutionTargetClaudeBinaryPath(event.target.value)}
+                      placeholder="claude"
+                      spellCheck={false}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Optional absolute path for Claude Code on this target.
+                    </span>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      Remote Codex binary path
+                    </span>
+                    <Input
+                      value={executionTargetCodexBinaryPath}
+                      onChange={(event) => setExecutionTargetCodexBinaryPath(event.target.value)}
+                      placeholder="Auto-detect"
+                      spellCheck={false}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Optional override when the remote machine does not expose <code>codex</code>{" "}
+                      on its default login PATH.
+                    </p>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      Remote CODEX_HOME path
+                    </span>
+                    <Input
+                      value={executionTargetCodexHomePath}
+                      onChange={(event) => setExecutionTargetCodexHomePath(event.target.value)}
+                      placeholder="Optional"
+                      spellCheck={false}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Optional remote Codex config directory for this target only.
+                    </p>
+                  </label>
+                </div>
+
+                <div className="mt-4 flex items-center gap-3">
                   <Button
                     type="button"
-                    variant="outline"
-                    onClick={resetExecutionTargetForm}
+                    onClick={() => {
+                      setExecutionTargetError(null);
+                      upsertExecutionTargetMutation.mutate();
+                    }}
                     disabled={upsertExecutionTargetMutation.isPending}
                   >
-                    Cancel
+                    {editingExecutionTargetId ? "Save SSH Target" : "Add SSH Target"}
                   </Button>
-                ) : null}
-                {executionTargetError ? (
-                  <p className="text-xs text-destructive">{executionTargetError}</p>
-                ) : null}
-              </div>
+                  {editingExecutionTargetId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={resetExecutionTargetForm}
+                      disabled={upsertExecutionTargetMutation.isPending}
+                    >
+                      Cancel
+                    </Button>
+                  ) : null}
+                  {executionTargetError ? (
+                    <p className="text-xs text-destructive">{executionTargetError}</p>
+                  ) : null}
+                </div>
 
-              <div className="mt-5 space-y-3">
-                {(executionTargetQuery.data ?? []).map((target) => (
-                  <div
-                    key={target.id}
-                    className="flex flex-col gap-3 rounded-xl border border-border bg-background px-3 py-3 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium text-foreground">
+                <div className="mt-5 space-y-3">
+                  {(executionTargetQuery.data ?? []).map((target) => (
+                    <div
+                      key={target.id}
+                      className="flex flex-col gap-3 rounded-xl border border-border bg-background px-3 py-3 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {target.label}
+                          </p>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {target.kind}
+                          </span>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {target.health?.status ?? "unknown"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatExecutionTargetConnection(target)}
+                        </p>
+                        {target.health?.detail ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {target.health.detail}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => checkExecutionTargetMutation.mutate(target.id)}
+                          disabled={checkExecutionTargetMutation.isPending}
+                        >
+                          Check Health
+                        </Button>
+                        {target.id !== "local" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => startEditingExecutionTarget(target)}
+                            disabled={upsertExecutionTargetMutation.isPending}
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
+                        {target.id !== "local" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => removeExecutionTargetMutation.mutate(target.id)}
+                            disabled={removeExecutionTargetMutation.isPending}
+                          >
+                            Remove
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-border bg-card p-5">
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Port Forwards</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Open browser-facing tunnels to services running on a registered target.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Target</span>
+                    <select
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      value={portForwardTargetId}
+                      onChange={(event) => setPortForwardTargetId(event.target.value)}
+                    >
+                      {(executionTargetQuery.data ?? []).map((target) => (
+                        <option key={target.id} value={target.id}>
                           {target.label}
-                        </p>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {target.kind}
-                        </span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {target.health?.status ?? "unknown"}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatExecutionTargetConnection(target)}
-                      </p>
-                      {target.health?.detail ? (
-                        <p className="mt-1 text-xs text-muted-foreground">{target.health.detail}</p>
-                      ) : null}
-                    </div>
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => checkExecutionTargetMutation.mutate(target.id)}
-                        disabled={checkExecutionTargetMutation.isPending}
-                      >
-                        Check Health
-                      </Button>
-                      {target.id !== "local" ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => startEditingExecutionTarget(target)}
-                          disabled={upsertExecutionTargetMutation.isPending}
-                        >
-                          Edit
-                        </Button>
-                      ) : null}
-                      {target.id !== "local" ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => removeExecutionTargetMutation.mutate(target.id)}
-                          disabled={removeExecutionTargetMutation.isPending}
-                        >
-                          Remove
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Port Forwards</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Open browser-facing tunnels to services running on a registered target.
-                </p>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Target</span>
-                  <select
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={portForwardTargetId}
-                    onChange={(event) => setPortForwardTargetId(event.target.value)}
-                  >
-                    {(executionTargetQuery.data ?? []).map((target) => (
-                      <option key={target.id} value={target.id}>
-                        {target.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Protocol</span>
-                  <select
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={portForwardProtocolHint}
-                    onChange={(event) =>
-                      setPortForwardProtocolHint(event.target.value as PortForwardProtocolHint)
-                    }
-                  >
-                    <option value="http">HTTP</option>
-                    <option value="https">HTTPS</option>
-                    <option value="tcp">TCP</option>
-                  </select>
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Remote port</span>
-                  <Input
-                    value={portForwardRemotePort}
-                    onChange={(event) => setPortForwardRemotePort(event.target.value)}
-                    inputMode="numeric"
-                    placeholder="3000"
-                  />
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Local port (optional)</span>
-                  <Input
-                    value={portForwardLocalPort}
-                    onChange={(event) => setPortForwardLocalPort(event.target.value)}
-                    inputMode="numeric"
-                    placeholder="auto"
-                  />
-                </label>
-
-                <label className="block space-y-1 md:col-span-2">
-                  <span className="text-xs font-medium text-foreground">Label (optional)</span>
-                  <Input
-                    value={portForwardLabel}
-                    onChange={(event) => setPortForwardLabel(event.target.value)}
-                    placeholder="Web UI"
-                  />
-                </label>
-              </div>
-
-              <div className="mt-4 flex items-center gap-3">
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setPortForwardError(null);
-                    openPortForwardMutation.mutate();
-                  }}
-                  disabled={openPortForwardMutation.isPending}
-                >
-                  Open Port Forward
-                </Button>
-                {portForwardError ? (
-                  <p className="text-xs text-destructive">{portForwardError}</p>
-                ) : null}
-              </div>
-
-              <div className="mt-5 space-y-3">
-                {(portForwardQuery.data ?? []).map((forward) => (
-                  <div
-                    key={forward.id}
-                    className="flex flex-col gap-3 rounded-xl border border-border bg-background px-3 py-3 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {forward.label ?? `${forward.targetId}:${forward.remotePort}`}
-                        </p>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {forward.status}
-                        </span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {forward.protocolHint ?? "tcp"}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {forward.targetId} · 127.0.0.1:{forward.localPort} → {forward.remoteHost}:
-                        {forward.remotePort}
-                      </p>
-                      {forward.url ? (
-                        <p className="mt-1 text-xs text-muted-foreground">{forward.url}</p>
-                      ) : null}
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-2">
-                      {forward.url ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            if (!forward.url) return;
-                            const api = ensureNativeApi();
-                            void api.shell.openExternal(forward.url);
-                          }}
-                        >
-                          Open
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => closePortForwardMutation.mutate(forward.id)}
-                        disabled={closePortForwardMutation.isPending}
-                      >
-                        Close
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Provider installs</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use non-default Codex or Claude
-                  installs.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
-                  const isOpen = openInstallProviders[providerSettings.provider];
-                  const binaryPathValue =
-                    providerSettings.binaryPathKey === "claudeBinaryPath"
-                      ? claudeBinaryPath
-                      : codexBinaryPath;
-                  const isDirty =
-                    providerSettings.provider === "codex"
-                      ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
-                        settings.codexHomePath !== defaults.codexHomePath
-                      : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
-
-                  return (
-                    <Collapsible
-                      key={providerSettings.provider}
-                      open={isOpen}
-                      onOpenChange={(open) =>
-                        setOpenInstallProviders((existing) => ({
-                          ...existing,
-                          [providerSettings.provider]: open,
-                        }))
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Protocol</span>
+                    <select
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      value={portForwardProtocolHint}
+                      onChange={(event) =>
+                        setPortForwardProtocolHint(event.target.value as PortForwardProtocolHint)
                       }
                     >
-                      <div className="overflow-hidden rounded-xl border border-border/70">
-                        <button
+                      <option value="http">HTTP</option>
+                      <option value="https">HTTPS</option>
+                      <option value="tcp">TCP</option>
+                    </select>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Remote port</span>
+                    <Input
+                      value={portForwardRemotePort}
+                      onChange={(event) => setPortForwardRemotePort(event.target.value)}
+                      inputMode="numeric"
+                      placeholder="3000"
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      Local port (optional)
+                    </span>
+                    <Input
+                      value={portForwardLocalPort}
+                      onChange={(event) => setPortForwardLocalPort(event.target.value)}
+                      inputMode="numeric"
+                      placeholder="auto"
+                    />
+                  </label>
+
+                  <label className="block space-y-1 md:col-span-2">
+                    <span className="text-xs font-medium text-foreground">Label (optional)</span>
+                    <Input
+                      value={portForwardLabel}
+                      onChange={(event) => setPortForwardLabel(event.target.value)}
+                      placeholder="Web UI"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-4 flex items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setPortForwardError(null);
+                      openPortForwardMutation.mutate();
+                    }}
+                    disabled={openPortForwardMutation.isPending}
+                  >
+                    Open Port Forward
+                  </Button>
+                  {portForwardError ? (
+                    <p className="text-xs text-destructive">{portForwardError}</p>
+                  ) : null}
+                </div>
+
+                <div className="mt-5 space-y-3">
+                  {(portForwardQuery.data ?? []).map((forward) => (
+                    <div
+                      key={forward.id}
+                      className="flex flex-col gap-3 rounded-xl border border-border bg-background px-3 py-3 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {forward.label ?? `${forward.targetId}:${forward.remotePort}`}
+                          </p>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {forward.status}
+                          </span>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {forward.protocolHint ?? "tcp"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {forward.targetId} · 127.0.0.1:{forward.localPort} → {forward.remoteHost}:
+                          {forward.remotePort}
+                        </p>
+                        {forward.url ? (
+                          <p className="mt-1 text-xs text-muted-foreground">{forward.url}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        {forward.url ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              if (!forward.url) return;
+                              const api = ensureNativeApi();
+                              void api.shell.openExternal(forward.url);
+                            }}
+                          >
+                            Open
+                          </Button>
+                        ) : null}
+                        <Button
                           type="button"
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                          onClick={() =>
-                            setOpenInstallProviders((existing) => ({
-                              ...existing,
-                              [providerSettings.provider]: !existing[providerSettings.provider],
-                            }))
-                          }
+                          variant="outline"
+                          onClick={() => closePortForwardMutation.mutate(forward.id)}
+                          disabled={closePortForwardMutation.isPending}
                         >
-                          <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                            {providerSettings.title}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground">
-                            {binaryPathValue || "PATH"}
-                          </span>
-                          {providerSettings.homePathKey && codexHomePath ? (
-                            <span className="text-[11px] text-muted-foreground">Custom home</span>
-                          ) : null}
-                          {isDirty ? (
-                            <span className="text-[11px] text-muted-foreground">Custom</span>
-                          ) : null}
-                          <ChevronDownIcon
-                            className={cn(
-                              "size-4 shrink-0 text-muted-foreground transition-transform",
-                              isOpen && "rotate-180",
-                            )}
-                          />
-                        </button>
+                          Close
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
 
-                        <CollapsibleContent>
-                          <div className="border-t border-border/70 px-4 py-4">
-                            <div className="space-y-3">
-                              <label
-                                htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
-                                className="block space-y-1"
-                              >
-                                <span className="text-xs font-medium text-foreground">
-                                  {providerSettings.title} binary path
-                                </span>
-                                <Input
-                                  id={`provider-install-${providerSettings.binaryPathKey}`}
-                                  value={binaryPathValue}
-                                  onChange={(event) =>
-                                    updateSettings(
-                                      providerSettings.binaryPathKey === "claudeBinaryPath"
-                                        ? { claudeBinaryPath: event.target.value }
-                                        : { codexBinaryPath: event.target.value },
-                                    )
-                                  }
-                                  placeholder={providerSettings.binaryPlaceholder}
-                                  spellCheck={false}
-                                />
-                                <span className="text-xs text-muted-foreground">
-                                  {providerSettings.binaryDescription}
-                                </span>
-                              </label>
+              <section
+                id="providers"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Provider installs</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    These overrides apply to new sessions and let you use non-default Codex or
+                    Claude installs.
+                  </p>
+                </div>
 
-                              {providerSettings.homePathKey ? (
+                <div className="space-y-3">
+                  {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
+                    const isOpen = openInstallProviders[providerSettings.provider];
+                    const binaryPathValue =
+                      providerSettings.binaryPathKey === "claudeBinaryPath"
+                        ? claudeBinaryPath
+                        : codexBinaryPath;
+                    const isDirty =
+                      providerSettings.provider === "codex"
+                        ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
+                          settings.codexHomePath !== defaults.codexHomePath
+                        : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
+
+                    return (
+                      <Collapsible
+                        key={providerSettings.provider}
+                        open={isOpen}
+                        onOpenChange={(open) =>
+                          setOpenInstallProviders((existing) => ({
+                            ...existing,
+                            [providerSettings.provider]: open,
+                          }))
+                        }
+                      >
+                        <div className="overflow-hidden rounded-xl border border-border/70">
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                            onClick={() =>
+                              setOpenInstallProviders((existing) => ({
+                                ...existing,
+                                [providerSettings.provider]: !existing[providerSettings.provider],
+                              }))
+                            }
+                          >
+                            <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                              {providerSettings.title}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {binaryPathValue || "PATH"}
+                            </span>
+                            {providerSettings.homePathKey && codexHomePath ? (
+                              <span className="text-[11px] text-muted-foreground">Custom home</span>
+                            ) : null}
+                            {isDirty ? (
+                              <span className="text-[11px] text-muted-foreground">Custom</span>
+                            ) : null}
+                            <ChevronDownIcon
+                              className={cn(
+                                "size-4 shrink-0 text-muted-foreground transition-transform",
+                                isOpen && "rotate-180",
+                              )}
+                            />
+                          </button>
+
+                          <CollapsibleContent>
+                            <div className="border-t border-border/70 px-4 py-4">
+                              <div className="space-y-3">
                                 <label
-                                  htmlFor={`provider-install-${providerSettings.homePathKey}`}
+                                  htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
                                   className="block space-y-1"
                                 >
                                   <span className="text-xs font-medium text-foreground">
-                                    CODEX_HOME path
+                                    {providerSettings.title} binary path
                                   </span>
                                   <Input
-                                    id={`provider-install-${providerSettings.homePathKey}`}
-                                    value={codexHomePath}
+                                    id={`provider-install-${providerSettings.binaryPathKey}`}
+                                    value={binaryPathValue}
                                     onChange={(event) =>
-                                      updateSettings({ codexHomePath: event.target.value })
+                                      updateSettings(
+                                        providerSettings.binaryPathKey === "claudeBinaryPath"
+                                          ? { claudeBinaryPath: event.target.value }
+                                          : { codexBinaryPath: event.target.value },
+                                      )
                                     }
-                                    placeholder={providerSettings.homePlaceholder}
+                                    placeholder={providerSettings.binaryPlaceholder}
                                     spellCheck={false}
                                   />
-                                  {providerSettings.homeDescription ? (
-                                    <span className="text-xs text-muted-foreground">
-                                      {providerSettings.homeDescription}
-                                    </span>
-                                  ) : null}
+                                  <span className="text-xs text-muted-foreground">
+                                    {providerSettings.binaryDescription}
+                                  </span>
                                 </label>
-                              ) : null}
 
-                              <div className="flex justify-end">
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() =>
-                                    updateSettings(
-                                      providerSettings.provider === "codex"
-                                        ? {
-                                            codexBinaryPath: defaults.codexBinaryPath,
-                                            codexHomePath: defaults.codexHomePath,
-                                          }
-                                        : {
-                                            claudeBinaryPath: defaults.claudeBinaryPath,
-                                          },
-                                    )
-                                  }
-                                >
-                                  Reset {providerSettings.title.toLowerCase()} overrides
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </CollapsibleContent>
-                      </div>
-                    </Collapsible>
-                  );
-                })}
-              </div>
-            </section>
+                                {providerSettings.homePathKey ? (
+                                  <label
+                                    htmlFor={`provider-install-${providerSettings.homePathKey}`}
+                                    className="block space-y-1"
+                                  >
+                                    <span className="text-xs font-medium text-foreground">
+                                      CODEX_HOME path
+                                    </span>
+                                    <Input
+                                      id={`provider-install-${providerSettings.homePathKey}`}
+                                      value={codexHomePath}
+                                      onChange={(event) =>
+                                        updateSettings({ codexHomePath: event.target.value })
+                                      }
+                                      placeholder={providerSettings.homePlaceholder}
+                                      spellCheck={false}
+                                    />
+                                    {providerSettings.homeDescription ? (
+                                      <span className="text-xs text-muted-foreground">
+                                        {providerSettings.homeDescription}
+                                      </span>
+                                    ) : null}
+                                  </label>
+                                ) : null}
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Models</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Save additional provider model slugs so they appear in the chat model picker and
-                  `/model` command suggestions.
-                </p>
-              </div>
-
-              <div className="space-y-5">
-                {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
-                  const provider = providerSettings.provider;
-                  const customModels = getCustomModelsForProvider(settings, provider);
-                  const customModelInput = customModelInputByProvider[provider];
-                  const customModelError = customModelErrorByProvider[provider] ?? null;
-                  return (
-                    <div
-                      key={provider}
-                      className="rounded-xl border border-border bg-background/50 p-4"
-                    >
-                      <div className="mb-4">
-                        <h3 className="text-sm font-medium text-foreground">
-                          {providerSettings.title}
-                        </h3>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {providerSettings.description}
-                        </p>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                          <label
-                            htmlFor={`custom-model-slug-${provider}`}
-                            className="block flex-1 space-y-1"
-                          >
-                            <span className="text-xs font-medium text-foreground">
-                              Custom model slug
-                            </span>
-                            <Input
-                              id={`custom-model-slug-${provider}`}
-                              value={customModelInput}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                setCustomModelInputByProvider((existing) => ({
-                                  ...existing,
-                                  [provider]: value,
-                                }));
-                                if (customModelError) {
-                                  setCustomModelErrorByProvider((existing) => ({
-                                    ...existing,
-                                    [provider]: null,
-                                  }));
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter") return;
-                                event.preventDefault();
-                                addCustomModel(provider);
-                              }}
-                              placeholder={providerSettings.placeholder}
-                              spellCheck={false}
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              Example: <code>{providerSettings.example}</code>
-                            </span>
-                          </label>
-
-                          <Button
-                            className="sm:mt-6"
-                            type="button"
-                            onClick={() => addCustomModel(provider)}
-                          >
-                            Add model
-                          </Button>
-                        </div>
-
-                        {customModelError ? (
-                          <p className="text-xs text-destructive">{customModelError}</p>
-                        ) : null}
-
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <p>Saved custom models: {customModels.length}</p>
-                            {customModels.length > 0 ? (
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                onClick={() =>
-                                  updateSettings(
-                                    patchCustomModels(provider, [
-                                      ...getDefaultCustomModelsForProvider(defaults, provider),
-                                    ]),
-                                  )
-                                }
-                              >
-                                Reset custom models
-                              </Button>
-                            ) : null}
-                          </div>
-
-                          {customModels.length > 0 ? (
-                            <div className="space-y-2">
-                              {customModels.map((slug) => (
-                                <div
-                                  key={`${provider}:${slug}`}
-                                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
-                                >
-                                  <code className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                    {slug}
-                                  </code>
+                                <div className="flex justify-end">
                                   <Button
                                     size="xs"
-                                    variant="ghost"
-                                    onClick={() => removeCustomModel(provider, slug)}
+                                    variant="outline"
+                                    onClick={() =>
+                                      updateSettings(
+                                        providerSettings.provider === "codex"
+                                          ? {
+                                              codexBinaryPath: defaults.codexBinaryPath,
+                                              codexHomePath: defaults.codexHomePath,
+                                            }
+                                          : {
+                                              claudeBinaryPath: defaults.claudeBinaryPath,
+                                            },
+                                      )
+                                    }
                                   >
-                                    Remove
+                                    Reset {providerSettings.title.toLowerCase()} overrides
                                   </Button>
                                 </div>
-                              ))}
+                              </div>
                             </div>
-                          ) : (
-                            <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
-                              No custom models saved yet.
-                            </div>
-                          )}
+                          </CollapsibleContent>
                         </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Git</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Configure the model used for generating commit messages, PR titles, and branch
-                  names.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-4 rounded-lg border border-border bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">Text generation model</p>
-                  <p className="text-xs text-muted-foreground">
-                    Model used for auto-generated git content.
-                  </p>
+                      </Collapsible>
+                    );
+                  })}
                 </div>
-                <Select
-                  value={settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL}
-                  onValueChange={(value) => {
-                    if (value) {
-                      updateSettings({
-                        textGenerationModel: value,
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    className="w-full shrink-0 sm:w-48"
-                    aria-label="Git text generation model"
-                  >
-                    <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end">
-                    {gitTextGenerationModelOptions.map((option) => (
-                      <SelectItem key={option.slug} value={option.slug}>
-                        {option.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </div>
+              </section>
 
-              {settings.textGenerationModel !== defaults.textGenerationModel ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        textGenerationModel: defaults.textGenerationModel,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Threads</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the default workspace mode for newly created draft threads.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
-                  <p className="text-xs text-muted-foreground">
-                    New threads start in New worktree mode instead of Local.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.defaultThreadEnvMode === "worktree"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      defaultThreadEnvMode: checked ? "worktree" : "local",
-                    })
-                  }
-                  aria-label="Default new threads to New worktree mode"
-                />
-              </div>
-
-              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        defaultThreadEnvMode: defaults.defaultThreadEnvMode,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Responses</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Control how assistant output is rendered during a turn.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
-                  <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.enableAssistantStreaming}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      enableAssistantStreaming: Boolean(checked),
-                    })
-                  }
-                  aria-label="Stream assistant messages"
-                />
-              </div>
-
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        enableAssistantStreaming: defaults.enableAssistantStreaming,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Voice</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Configure realtime voice input and spoken assistant readback for this device.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Enable spoken replies</p>
-                    <p className="text-xs text-muted-foreground">
-                      Shows speaker controls in chat and allows assistant readback.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.voiceEnabled}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        voiceEnabled: Boolean(checked),
-                      })
-                    }
-                    aria-label="Enable voice features"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Enable microphone input</p>
-                    <p className="text-xs text-muted-foreground">
-                      Shows the mic and “Hey T3” controls in chat and allows in-app voice capture.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.voiceInputEnabled}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        voiceInputEnabled: Boolean(checked),
-                        ...(checked ? {} : { voiceWakePhraseEnabled: false }),
-                      })
-                    }
-                    aria-label="Enable microphone input"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Speak assistant replies</p>
-                    <p className="text-xs text-muted-foreground">
-                      Read streamed Codex or Claude responses aloud as they arrive.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.voiceAutoSpeakReplies}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        voiceAutoSpeakReplies: Boolean(checked),
-                      })
-                    }
-                    aria-label="Speak assistant replies"
-                    disabled={!settings.voiceEnabled}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Highlight spoken sentence</p>
-                    <p className="text-xs text-muted-foreground">
-                      Show the current sentence being read back above the composer.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.voiceHighlightSpokenSentence}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        voiceHighlightSpokenSentence: Boolean(checked),
-                      })
-                    }
-                    aria-label="Highlight spoken sentence"
-                    disabled={!settings.voiceEnabled || !settings.voiceAutoSpeakReplies}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Wake phrase mode</p>
-                    <p className="text-xs text-muted-foreground">
-                      Lets the chat listen for “Hey T3” and start voice input without pressing the
-                      keyboard.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={settings.voiceWakePhraseEnabled}
-                    onCheckedChange={(checked) =>
-                      updateSettings({
-                        voiceWakePhraseEnabled: Boolean(checked),
-                      })
-                    }
-                    aria-label="Enable Hey T3 wake phrase mode"
-                    disabled={!settings.voiceInputEnabled}
-                  />
-                </div>
-
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <div className="mb-2">
-                    <p className="text-sm font-medium text-foreground">Voice input model</p>
-                    <p className="text-xs text-muted-foreground">
-                      Optional override for the realtime voice-input model. Leave blank to use the
-                      server default.
-                    </p>
-                  </div>
-                  <Input
-                    value={settings.voiceModel}
-                    onChange={(event) =>
-                      updateSettings({
-                        voiceModel: event.target.value,
-                      })
-                    }
-                    placeholder="gpt-realtime"
-                    aria-label="Voice input model"
-                  />
-                </div>
-
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <div className="mb-2">
-                    <p className="text-sm font-medium text-foreground">Voice name</p>
-                    <p className="text-xs text-muted-foreground">
-                      Choose an OpenAI built-in voice for spoken readback. Realtime input falls back
-                      safely if a voice is not available on that endpoint.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.voiceName}
-                    onValueChange={(value) =>
-                      updateSettings({
-                        voiceName: value ?? "",
-                      })
-                    }
-                  >
-                    <SelectTrigger className="w-full" aria-label="Voice name">
-                      <SelectValue placeholder="Server default">
-                        {REALTIME_VOICE_OPTIONS.find(
-                          (option) => option.value === settings.voiceName,
-                        )?.label ?? "Server default"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {REALTIME_VOICE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value || "default"} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Microphone input</p>
-                      <p className="text-xs text-muted-foreground">
-                        Choose which microphone voice input uses. Your AirPods will appear here
-                        after the browser can see them.
-                      </p>
-                    </div>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => {
-                        void audioInputDevices.refresh();
+              <SettingsSection id="models" title="Models">
+                <SettingsRow
+                  title="Git writing model"
+                  description="Used for generated commit messages, PR titles, and branch names."
+                  control={
+                    <Select
+                      value={currentGitTextGenerationModel}
+                      onValueChange={(value) => {
+                        if (!value) return;
+                        updateSettings({
+                          textGenerationModel: value,
+                        });
                       }}
                     >
-                      Refresh
-                    </Button>
+                      <SelectTrigger
+                        className="w-full sm:w-52"
+                        aria-label="Git text generation model"
+                      >
+                        <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                        {gitTextGenerationModelOptions.map((option) => (
+                          <SelectItem hideIndicator key={option.slug} value={option.slug}>
+                            {option.name}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  }
+                />
+
+                <SettingsRow
+                  title="Custom models"
+                  description="Add custom model slugs for supported providers."
+                  status={
+                    totalCustomModels > 0
+                      ? `${totalCustomModels} custom model${totalCustomModels === 1 ? "" : "s"} saved.`
+                      : "No custom models saved yet."
+                  }
+                >
+                  <div className="mt-4 border-t border-border pt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Select
+                        value={selectedCustomModelProvider}
+                        onValueChange={(value) => {
+                          if (value !== "codex" && value !== "claudeAgent") {
+                            return;
+                          }
+                          setSelectedCustomModelProvider(value);
+                        }}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full sm:w-40"
+                          aria-label="Custom model provider"
+                        >
+                          <SelectValue>{selectedCustomModelProviderSettings.title}</SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          {MODEL_PROVIDER_SETTINGS.map((providerSettings) => (
+                            <SelectItem
+                              hideIndicator
+                              className="min-h-7 text-sm"
+                              key={providerSettings.provider}
+                              value={providerSettings.provider}
+                            >
+                              {providerSettings.title}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                      <Input
+                        id="custom-model-slug"
+                        value={selectedCustomModelInput}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setCustomModelInputByProvider((existing) => ({
+                            ...existing,
+                            [selectedCustomModelProvider]: value,
+                          }));
+                          if (selectedCustomModelError) {
+                            setCustomModelErrorByProvider((existing) => ({
+                              ...existing,
+                              [selectedCustomModelProvider]: null,
+                            }));
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          addCustomModel(selectedCustomModelProvider);
+                        }}
+                        placeholder={selectedCustomModelProviderSettings.example}
+                        spellCheck={false}
+                      />
+                      <Button
+                        className="shrink-0"
+                        variant="outline"
+                        onClick={() => addCustomModel(selectedCustomModelProvider)}
+                      >
+                        Add
+                      </Button>
+                    </div>
+
+                    {selectedCustomModelError ? (
+                      <p className="mt-2 text-xs text-destructive">{selectedCustomModelError}</p>
+                    ) : null}
+
+                    {totalCustomModels > 0 ? (
+                      <div className="mt-3">
+                        <div>
+                          {visibleCustomModelRows.map((row) => (
+                            <div
+                              key={row.key}
+                              className="group grid grid-cols-[minmax(5rem,6rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/60 px-4 py-2 first:border-t-0"
+                            >
+                              <span className="truncate text-xs text-muted-foreground">
+                                {row.providerTitle}
+                              </span>
+                              <code className="min-w-0 truncate text-sm text-foreground">
+                                {row.slug}
+                              </code>
+                              <button
+                                type="button"
+                                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100"
+                                aria-label={`Remove ${row.slug}`}
+                                onClick={() => removeCustomModel(row.provider, row.slug)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {savedCustomModelRows.length > 5 ? (
+                          <button
+                            type="button"
+                            className="mt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            onClick={() => setShowAllCustomModels((value) => !value)}
+                          >
+                            {showAllCustomModels
+                              ? "Show less"
+                              : `Show more (${savedCustomModelRows.length - 5})`}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                  <Select
-                    value={settings.voiceInputDeviceId}
-                    onValueChange={(value) =>
-                      updateSettings({
-                        voiceInputDeviceId: value ?? "",
-                      })
-                    }
-                    disabled={!audioInputDevices.isSupported}
-                  >
-                    <SelectTrigger className="w-full" aria-label="Microphone input">
-                      <SelectValue placeholder="System default microphone">
-                        {settings.voiceInputDeviceId
-                          ? (audioInputDevices.devices.find(
-                              (device) => device.deviceId === settings.voiceInputDeviceId,
-                            )?.label ?? "Previously selected microphone")
-                          : "System default microphone"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup>
-                      <SelectItem value="">System default microphone</SelectItem>
-                      {audioInputDevices.devices.map((device) => (
-                        <SelectItem key={device.deviceId} value={device.deviceId}>
-                          {device.label}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
+                </SettingsRow>
+              </SettingsSection>
+
+              <section
+                id="threads"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Threads</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Choose the default workspace mode for newly created draft threads.
+                  </p>
                 </div>
 
                 <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                   <div>
-                    <p className="text-sm font-medium text-foreground">Voice speed</p>
+                    <p className="text-sm font-medium text-foreground">Default to New worktree</p>
                     <p className="text-xs text-muted-foreground">
-                      Adjust spoken assistant playback speed without changing the text generation.
+                      New threads start in New worktree mode instead of Local.
                     </p>
                   </div>
-                  <Select
-                    value={settings.voicePlaybackRate}
-                    onValueChange={(value) => {
-                      if (
-                        value !== "0.75" &&
-                        value !== "1.0" &&
-                        value !== "1.25" &&
-                        value !== "1.5" &&
-                        value !== "1.75" &&
-                        value !== "2.0"
-                      ) {
-                        return;
-                      }
+                  <Switch
+                    checked={settings.defaultThreadEnvMode === "worktree"}
+                    onCheckedChange={(checked) =>
                       updateSettings({
-                        voicePlaybackRate: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-28" aria-label="Voice speed">
-                      <SelectValue>
-                        {VOICE_PLAYBACK_RATE_LABELS[settings.voicePlaybackRate]}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="0.75">{VOICE_PLAYBACK_RATE_LABELS["0.75"]}</SelectItem>
-                      <SelectItem value="1.0">{VOICE_PLAYBACK_RATE_LABELS["1.0"]}</SelectItem>
-                      <SelectItem value="1.25">{VOICE_PLAYBACK_RATE_LABELS["1.25"]}</SelectItem>
-                      <SelectItem value="1.5">{VOICE_PLAYBACK_RATE_LABELS["1.5"]}</SelectItem>
-                      <SelectItem value="1.75">{VOICE_PLAYBACK_RATE_LABELS["1.75"]}</SelectItem>
-                      <SelectItem value="2.0">{VOICE_PLAYBACK_RATE_LABELS["2.0"]}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Voice silence timeout</p>
-                    <p className="text-xs text-muted-foreground">
-                      How long T3 waits after you stop speaking before it ends listening and sends
-                      the transcript.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.voiceSilenceDuration}
-                    onValueChange={(value) => {
-                      if (
-                        value !== "1.5" &&
-                        value !== "2.0" &&
-                        value !== "2.5" &&
-                        value !== "3.0" &&
-                        value !== "4.0"
-                      ) {
-                        return;
-                      }
-                      updateSettings({
-                        voiceSilenceDuration: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-28" aria-label="Voice silence timeout">
-                      <SelectValue>
-                        {VOICE_SILENCE_DURATION_LABELS[settings.voiceSilenceDuration]}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="1.5">{VOICE_SILENCE_DURATION_LABELS["1.5"]}</SelectItem>
-                      <SelectItem value="2.0">{VOICE_SILENCE_DURATION_LABELS["2.0"]}</SelectItem>
-                      <SelectItem value="2.5">{VOICE_SILENCE_DURATION_LABELS["2.5"]}</SelectItem>
-                      <SelectItem value="3.0">{VOICE_SILENCE_DURATION_LABELS["3.0"]}</SelectItem>
-                      <SelectItem value="4.0">{VOICE_SILENCE_DURATION_LABELS["4.0"]}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <div className="mb-2">
-                    <p className="text-sm font-medium text-foreground">Voice instructions</p>
-                    <p className="text-xs text-muted-foreground">
-                      Shape the tone and delivery used for spoken assistant readback.
-                    </p>
-                  </div>
-                  <Textarea
-                    value={settings.voiceInstructions}
-                    onChange={(event) =>
-                      updateSettings({
-                        voiceInstructions: event.target.value,
+                        defaultThreadEnvMode: checked ? "worktree" : "local",
                       })
                     }
-                    rows={4}
-                    aria-label="Voice instructions"
+                    aria-label="Default new threads to New worktree mode"
                   />
                 </div>
 
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">OpenAI usage</p>
-                    <p className="text-xs text-muted-foreground">
-                      Open the OpenAI usage page to check token and spend activity for voice
-                      traffic.
-                    </p>
-                  </div>
-                  <Button size="xs" variant="outline" onClick={openOpenAIPlatform}>
-                    Open usage
-                  </Button>
-                </div>
-
-                {settings.voiceEnabled !== defaults.voiceEnabled ||
-                settings.voiceInputEnabled !== defaults.voiceInputEnabled ||
-                settings.voiceWakePhraseEnabled !== defaults.voiceWakePhraseEnabled ||
-                settings.voiceAutoSpeakReplies !== defaults.voiceAutoSpeakReplies ||
-                settings.voiceHighlightSpokenSentence !== defaults.voiceHighlightSpokenSentence ||
-                settings.voiceModel !== defaults.voiceModel ||
-                settings.voiceName !== defaults.voiceName ||
-                settings.voiceInputDeviceId !== defaults.voiceInputDeviceId ||
-                settings.voicePlaybackRate !== defaults.voicePlaybackRate ||
-                settings.voiceSilenceDuration !== defaults.voiceSilenceDuration ||
-                settings.voiceInstructions !== defaults.voiceInstructions ? (
-                  <div className="flex justify-end">
+                {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                  <div className="mt-3 flex justify-end">
                     <Button
                       size="xs"
                       variant="outline"
                       onClick={() =>
                         updateSettings({
-                          voiceEnabled: defaults.voiceEnabled,
-                          voiceInputEnabled: defaults.voiceInputEnabled,
-                          voiceWakePhraseEnabled: defaults.voiceWakePhraseEnabled,
-                          voiceAutoSpeakReplies: defaults.voiceAutoSpeakReplies,
-                          voiceHighlightSpokenSentence: defaults.voiceHighlightSpokenSentence,
-                          voiceModel: defaults.voiceModel,
-                          voiceName: defaults.voiceName,
-                          voiceInputDeviceId: defaults.voiceInputDeviceId,
-                          voicePlaybackRate: defaults.voicePlaybackRate,
-                          voiceSilenceDuration: defaults.voiceSilenceDuration,
-                          voiceInstructions: defaults.voiceInstructions,
+                          defaultThreadEnvMode: defaults.defaultThreadEnvMode,
                         })
                       }
                     >
@@ -1859,105 +1533,525 @@ function SettingsRouteView() {
                     </Button>
                   </div>
                 ) : null}
-              </div>
-            </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
-                  directly.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-foreground">Config file path</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                      {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Archive confirmation</p>
+                    <p className="text-xs text-muted-foreground">
+                      Ask before archiving a thread from the sidebar context menu.
                     </p>
                   </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={!keybindingsConfigPath || isOpeningKeybindings}
-                    onClick={openKeybindingsFile}
-                  >
-                    {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
-                  </Button>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  Opens in your preferred editor selection.
-                </p>
-                {openKeybindingsError ? (
-                  <p className="text-xs text-destructive">{openKeybindingsError}</p>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Safety</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Additional guardrails for destructive local actions.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Confirm thread deletion</p>
-                  <p className="text-xs text-muted-foreground">
-                    Ask for confirmation before deleting a thread and its chat history.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.confirmThreadDelete}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      confirmThreadDelete: Boolean(checked),
-                    })
-                  }
-                  aria-label="Confirm thread deletion"
-                />
-              </div>
-
-              {settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
+                  <Switch
+                    checked={settings.confirmThreadArchive}
+                    onCheckedChange={(checked) =>
                       updateSettings({
-                        confirmThreadDelete: defaults.confirmThreadDelete,
+                        confirmThreadArchive: Boolean(checked),
                       })
                     }
-                  >
-                    Restore default
-                  </Button>
+                    aria-label="Confirm thread archiving"
+                  />
                 </div>
-              ) : null}
-            </section>
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">About</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Application version and environment information.
-                </p>
-              </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Version</p>
-                  <p className="text-xs text-muted-foreground">
-                    Current version of the application.
+                {settings.confirmThreadArchive !== defaults.confirmThreadArchive ? (
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          confirmThreadArchive: defaults.confirmThreadArchive,
+                        })
+                      }
+                    >
+                      Restore archive confirmation default
+                    </Button>
+                  </div>
+                ) : null}
+              </section>
+
+              <section id="archived" className="scroll-mt-4 space-y-3">
+                <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Archived
+                </h2>
+                <ArchivedThreadsSection />
+              </section>
+
+              <section
+                id="responses"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Responses</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Control how assistant output is rendered during a turn.
                   </p>
                 </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
-              </div>
-            </section>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
+                    <p className="text-xs text-muted-foreground">
+                      Show token-by-token output while a response is in progress.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.enableAssistantStreaming}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        enableAssistantStreaming: Boolean(checked),
+                      })
+                    }
+                    aria-label="Stream assistant messages"
+                  />
+                </div>
+
+                {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          enableAssistantStreaming: defaults.enableAssistantStreaming,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
+              </section>
+
+              <section
+                id="voice"
+                className="scroll-mt-4 rounded-2xl border border-border bg-card p-5"
+              >
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Voice</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Configure realtime voice input and spoken assistant readback for this device.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Enable spoken replies</p>
+                      <p className="text-xs text-muted-foreground">
+                        Shows speaker controls in chat and allows assistant readback.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.voiceEnabled}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          voiceEnabled: Boolean(checked),
+                        })
+                      }
+                      aria-label="Enable voice features"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Enable microphone input</p>
+                      <p className="text-xs text-muted-foreground">
+                        Shows the mic and “Hey T3” controls in chat and allows in-app voice capture.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.voiceInputEnabled}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          voiceInputEnabled: Boolean(checked),
+                          ...(checked ? {} : { voiceWakePhraseEnabled: false }),
+                        })
+                      }
+                      aria-label="Enable microphone input"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Speak assistant replies</p>
+                      <p className="text-xs text-muted-foreground">
+                        Read streamed Codex or Claude responses aloud as they arrive.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.voiceAutoSpeakReplies}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          voiceAutoSpeakReplies: Boolean(checked),
+                        })
+                      }
+                      aria-label="Speak assistant replies"
+                      disabled={!settings.voiceEnabled}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Highlight spoken sentence
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Show the current sentence being read back above the composer.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.voiceHighlightSpokenSentence}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          voiceHighlightSpokenSentence: Boolean(checked),
+                        })
+                      }
+                      aria-label="Highlight spoken sentence"
+                      disabled={!settings.voiceEnabled || !settings.voiceAutoSpeakReplies}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Wake phrase mode</p>
+                      <p className="text-xs text-muted-foreground">
+                        Lets the chat listen for “Hey T3” and start voice input without pressing the
+                        keyboard.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.voiceWakePhraseEnabled}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          voiceWakePhraseEnabled: Boolean(checked),
+                        })
+                      }
+                      aria-label="Enable Hey T3 wake phrase mode"
+                      disabled={!settings.voiceInputEnabled}
+                    />
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-background px-3 py-3">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-foreground">Voice input model</p>
+                      <p className="text-xs text-muted-foreground">
+                        Optional override for the realtime voice-input model. Leave blank to use the
+                        server default.
+                      </p>
+                    </div>
+                    <Input
+                      value={settings.voiceModel}
+                      onChange={(event) =>
+                        updateSettings({
+                          voiceModel: event.target.value,
+                        })
+                      }
+                      placeholder="gpt-realtime"
+                      aria-label="Voice input model"
+                    />
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-background px-3 py-3">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-foreground">Voice name</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose an OpenAI built-in voice for spoken readback. Realtime input falls
+                        back safely if a voice is not available on that endpoint.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.voiceName}
+                      onValueChange={(value) =>
+                        updateSettings({
+                          voiceName: value ?? "",
+                        })
+                      }
+                    >
+                      <SelectTrigger className="w-full" aria-label="Voice name">
+                        <SelectValue placeholder="Server default">
+                          {REALTIME_VOICE_OPTIONS.find(
+                            (option) => option.value === settings.voiceName,
+                          )?.label ?? "Server default"}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {REALTIME_VOICE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value || "default"} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-background px-3 py-3">
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Microphone input</p>
+                        <p className="text-xs text-muted-foreground">
+                          Choose which microphone voice input uses. Your AirPods will appear here
+                          after the browser can see them.
+                        </p>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          void audioInputDevices.refresh();
+                        }}
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+                    <Select
+                      value={settings.voiceInputDeviceId}
+                      onValueChange={(value) =>
+                        updateSettings({
+                          voiceInputDeviceId: value ?? "",
+                        })
+                      }
+                      disabled={!audioInputDevices.isSupported}
+                    >
+                      <SelectTrigger className="w-full" aria-label="Microphone input">
+                        <SelectValue placeholder="System default microphone">
+                          {settings.voiceInputDeviceId
+                            ? (audioInputDevices.devices.find(
+                                (device) => device.deviceId === settings.voiceInputDeviceId,
+                              )?.label ?? "Previously selected microphone")
+                            : "System default microphone"}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="">System default microphone</SelectItem>
+                        {audioInputDevices.devices.map((device) => (
+                          <SelectItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Voice speed</p>
+                      <p className="text-xs text-muted-foreground">
+                        Adjust spoken assistant playback speed without changing the text generation.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.voicePlaybackRate}
+                      onValueChange={(value) => {
+                        if (
+                          value !== "0.75" &&
+                          value !== "1.0" &&
+                          value !== "1.25" &&
+                          value !== "1.5" &&
+                          value !== "1.75" &&
+                          value !== "2.0"
+                        ) {
+                          return;
+                        }
+                        updateSettings({
+                          voicePlaybackRate: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-28" aria-label="Voice speed">
+                        <SelectValue>
+                          {VOICE_PLAYBACK_RATE_LABELS[settings.voicePlaybackRate]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="0.75">{VOICE_PLAYBACK_RATE_LABELS["0.75"]}</SelectItem>
+                        <SelectItem value="1.0">{VOICE_PLAYBACK_RATE_LABELS["1.0"]}</SelectItem>
+                        <SelectItem value="1.25">{VOICE_PLAYBACK_RATE_LABELS["1.25"]}</SelectItem>
+                        <SelectItem value="1.5">{VOICE_PLAYBACK_RATE_LABELS["1.5"]}</SelectItem>
+                        <SelectItem value="1.75">{VOICE_PLAYBACK_RATE_LABELS["1.75"]}</SelectItem>
+                        <SelectItem value="2.0">{VOICE_PLAYBACK_RATE_LABELS["2.0"]}</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Voice silence timeout</p>
+                      <p className="text-xs text-muted-foreground">
+                        How long T3 waits after you stop speaking before it ends listening and sends
+                        the transcript.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.voiceSilenceDuration}
+                      onValueChange={(value) => {
+                        if (
+                          value !== "1.5" &&
+                          value !== "2.0" &&
+                          value !== "2.5" &&
+                          value !== "3.0" &&
+                          value !== "4.0"
+                        ) {
+                          return;
+                        }
+                        updateSettings({
+                          voiceSilenceDuration: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-28" aria-label="Voice silence timeout">
+                        <SelectValue>
+                          {VOICE_SILENCE_DURATION_LABELS[settings.voiceSilenceDuration]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end">
+                        <SelectItem value="1.5">{VOICE_SILENCE_DURATION_LABELS["1.5"]}</SelectItem>
+                        <SelectItem value="2.0">{VOICE_SILENCE_DURATION_LABELS["2.0"]}</SelectItem>
+                        <SelectItem value="2.5">{VOICE_SILENCE_DURATION_LABELS["2.5"]}</SelectItem>
+                        <SelectItem value="3.0">{VOICE_SILENCE_DURATION_LABELS["3.0"]}</SelectItem>
+                        <SelectItem value="4.0">{VOICE_SILENCE_DURATION_LABELS["4.0"]}</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-background px-3 py-3">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-foreground">Voice instructions</p>
+                      <p className="text-xs text-muted-foreground">
+                        Shape the tone and delivery used for spoken assistant readback.
+                      </p>
+                    </div>
+                    <Textarea
+                      value={settings.voiceInstructions}
+                      onChange={(event) =>
+                        updateSettings({
+                          voiceInstructions: event.target.value,
+                        })
+                      }
+                      rows={4}
+                      aria-label="Voice instructions"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">OpenAI usage</p>
+                      <p className="text-xs text-muted-foreground">
+                        Open the OpenAI usage page to check token and spend activity for voice
+                        traffic.
+                      </p>
+                    </div>
+                    <Button size="xs" variant="outline" onClick={openOpenAIPlatform}>
+                      Open usage
+                    </Button>
+                  </div>
+
+                  {settings.voiceEnabled !== defaults.voiceEnabled ||
+                  settings.voiceInputEnabled !== defaults.voiceInputEnabled ||
+                  settings.voiceWakePhraseEnabled !== defaults.voiceWakePhraseEnabled ||
+                  settings.voiceAutoSpeakReplies !== defaults.voiceAutoSpeakReplies ||
+                  settings.voiceHighlightSpokenSentence !== defaults.voiceHighlightSpokenSentence ||
+                  settings.voiceModel !== defaults.voiceModel ||
+                  settings.voiceName !== defaults.voiceName ||
+                  settings.voiceInputDeviceId !== defaults.voiceInputDeviceId ||
+                  settings.voicePlaybackRate !== defaults.voicePlaybackRate ||
+                  settings.voiceSilenceDuration !== defaults.voiceSilenceDuration ||
+                  settings.voiceInstructions !== defaults.voiceInstructions ? (
+                    <div className="flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            voiceEnabled: defaults.voiceEnabled,
+                            voiceInputEnabled: defaults.voiceInputEnabled,
+                            voiceWakePhraseEnabled: defaults.voiceWakePhraseEnabled,
+                            voiceAutoSpeakReplies: defaults.voiceAutoSpeakReplies,
+                            voiceHighlightSpokenSentence: defaults.voiceHighlightSpokenSentence,
+                            voiceModel: defaults.voiceModel,
+                            voiceName: defaults.voiceName,
+                            voiceInputDeviceId: defaults.voiceInputDeviceId,
+                            voicePlaybackRate: defaults.voicePlaybackRate,
+                            voiceSilenceDuration: defaults.voiceSilenceDuration,
+                            voiceInstructions: defaults.voiceInstructions,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+
+              <SettingsSection id="advanced" title="Advanced">
+                <SettingsRow
+                  title="Keybindings"
+                  description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
+                  status={
+                    <>
+                      <span className="block break-all font-mono text-[11px] text-foreground">
+                        {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                      </span>
+                      {openKeybindingsError ? (
+                        <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
+                      ) : (
+                        <span className="mt-1 block">Opens in your preferred editor.</span>
+                      )}
+                    </>
+                  }
+                  control={
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={!keybindingsConfigPath || isOpeningKeybindings}
+                      onClick={openKeybindingsFile}
+                    >
+                      {isOpeningKeybindings ? "Opening..." : "Open file"}
+                    </Button>
+                  }
+                />
+
+                <SettingsRow
+                  title="Safety"
+                  description="Ask for confirmation before deleting a thread and its chat history."
+                  control={
+                    <Switch
+                      checked={settings.confirmThreadDelete}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          confirmThreadDelete: Boolean(checked),
+                        })
+                      }
+                      aria-label="Confirm thread deletion"
+                    />
+                  }
+                >
+                  {settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
+                    <div className="mt-4 flex justify-end border-t border-border pt-4">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            confirmThreadDelete: defaults.confirmThreadDelete,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </SettingsRow>
+
+                <SettingsRow
+                  title="Version"
+                  description="Current application version."
+                  control={
+                    <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                  }
+                />
+              </SettingsSection>
+            </div>
           </div>
         </div>
       </div>
