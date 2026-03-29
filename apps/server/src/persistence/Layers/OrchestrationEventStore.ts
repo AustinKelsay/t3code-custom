@@ -67,53 +67,57 @@ const READ_PAGE_SIZE = 500;
 function normalizeLegacyPersistedRow(
   row: Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema>,
 ): Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema> {
-  // Older event rows used nested *Selection payloads before the flat model fields existed.
-  if (row.type === "project.created" && row.payload !== null && typeof row.payload === "object") {
-    const defaultModel =
-      "defaultModel" in row.payload
-        ? row.payload.defaultModel
-        : "defaultModelSelection" in row.payload &&
-            row.payload.defaultModelSelection !== null &&
-            typeof row.payload.defaultModelSelection === "object" &&
-            "model" in row.payload.defaultModelSelection &&
-            typeof row.payload.defaultModelSelection.model === "string"
-          ? row.payload.defaultModelSelection.model
-          : null;
-
-    return {
-      ...row,
-      payload: {
-        ...row.payload,
-        defaultModel,
-      },
-    };
+  if (row.payload === null || typeof row.payload !== "object") {
+    return row;
   }
 
-  if (
-    row.type === "thread.created" &&
-    row.payload !== null &&
-    typeof row.payload === "object" &&
-    !("model" in row.payload)
-  ) {
-    const model =
-      "modelSelection" in row.payload &&
-      row.payload.modelSelection !== null &&
-      typeof row.payload.modelSelection === "object" &&
-      "model" in row.payload.modelSelection &&
-      typeof row.payload.modelSelection.model === "string"
-        ? row.payload.modelSelection.model
-        : "gpt-5-codex";
+  const payload = row.payload;
+  const normalizedPayload: Record<string, unknown> = { ...payload };
 
-    return {
-      ...row,
-      payload: {
-        ...row.payload,
-        model,
-      },
-    };
+  // Older payloads stored nested selection objects before these flattened fields existed.
+  if (!("defaultModel" in payload)) {
+    const defaultModelSelection =
+      "defaultModelSelection" in payload ? payload.defaultModelSelection : undefined;
+    if (
+      defaultModelSelection !== null &&
+      typeof defaultModelSelection === "object" &&
+      "model" in defaultModelSelection &&
+      typeof defaultModelSelection.model === "string"
+    ) {
+      normalizedPayload.defaultModel = defaultModelSelection.model;
+    }
   }
 
-  return row;
+  if (!("model" in payload)) {
+    const modelSelection = "modelSelection" in payload ? payload.modelSelection : undefined;
+    if (
+      modelSelection !== null &&
+      typeof modelSelection === "object" &&
+      "model" in modelSelection &&
+      typeof modelSelection.model === "string"
+    ) {
+      normalizedPayload.model = modelSelection.model;
+      if (!("provider" in payload) && "provider" in modelSelection) {
+        normalizedPayload.provider = modelSelection.provider;
+      }
+      if (!("modelOptions" in payload) && "options" in modelSelection) {
+        normalizedPayload.modelOptions = modelSelection.options;
+      }
+    }
+  }
+
+  if (row.type === "project.created" && !("defaultModel" in normalizedPayload)) {
+    normalizedPayload.defaultModel = null;
+  }
+
+  if (row.type === "thread.created" && !("model" in normalizedPayload)) {
+    normalizedPayload.model = "gpt-5-codex";
+  }
+
+  return {
+    ...row,
+    payload: normalizedPayload,
+  };
 }
 
 function inferActorKind(
