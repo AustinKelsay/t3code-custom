@@ -29,6 +29,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type { ServerConfig } from "./server";
+import type { ServerSettings, ServerSettingsPatch } from "./settings";
 import type {
   ExecutionTarget,
   ExecutionTargetCheckHealthInput,
@@ -198,6 +199,8 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     listExecutionTargets: () => Promise<ReadonlyArray<ExecutionTarget>>;
     upsertExecutionTarget: (input: ExecutionTargetUpsertInput) => Promise<ExecutionTarget>;

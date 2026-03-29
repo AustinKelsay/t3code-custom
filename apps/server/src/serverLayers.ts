@@ -44,6 +44,7 @@ import { ExecutionTargetRuntimeLive } from "./executionTarget/Layers/ExecutionTa
 import { PortForwardManagerLive } from "./portForward/Layers/PortForwardManager";
 import { RealtimeTokenServiceLive } from "./voice/Layers/RealtimeTokenService";
 import { SpeechSynthesisServiceLive } from "./voice/Layers/SpeechSynthesisService";
+import { ServerSettingsLive } from "./serverSettings";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService | ProviderSessionDirectory,
@@ -166,6 +167,7 @@ export function makeServerRuntimeServicesLayer() {
     terminalLayer,
     portForwardLayer,
     KeybindingsLive,
+    ServerSettingsLive,
     executionTargetServiceLayer,
     executionTargetRuntimeLayer,
     ThreadNotesRepositoryLive,

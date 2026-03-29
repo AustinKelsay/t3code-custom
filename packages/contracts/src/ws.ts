@@ -42,6 +42,7 @@ import {
 } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
+import { ServerSettingsPatch } from "./settings";
 import {
   ExecutionTargetCheckHealthInput,
   ExecutionTargetRemoveInput,
@@ -99,6 +100,8 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverGetSettings: "server.getSettings",
+  serverUpdateSettings: "server.updateSettings",
   serverUpsertKeybinding: "server.upsertKeybinding",
   executionTargetList: "executionTarget.list",
   executionTargetUpsert: "executionTarget.upsert",
@@ -177,6 +180,8 @@ const WebSocketRequestBody = Schema.Union([
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverGetSettings, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverUpdateSettings, Schema.Struct({ patch: ServerSettingsPatch })),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
   tagRequestBody(WS_METHODS.executionTargetList, Schema.Struct({})),
   tagRequestBody(WS_METHODS.executionTargetUpsert, ExecutionTargetUpsertInput),

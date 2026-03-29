@@ -1,40 +1,54 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { Option, Schema } from "effect";
 import {
+  ClientSettingsSchema,
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+  DEFAULT_TIMESTAMP_FORMAT,
+  DEFAULT_UNIFIED_SETTINGS,
+  DEFAULT_VOICE_INSTRUCTIONS,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+  TimestampFormat,
   TrimmedNonEmptyString,
-  type ProviderKind,
+  UiScale,
+  VoicePlaybackRate,
+  VoiceSilenceDuration,
   type ProviderStartOptions,
+  type ProviderKind,
+  type UnifiedSettings,
+  type ModelSelection,
+  type UiScale as UiScaleType,
 } from "@t3tools/contracts";
 import {
+  inferProviderForModel,
   getDefaultModel,
   getModelOptions,
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { getLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { useIsMobile } from "./hooks/useMediaQuery";
 import { EnvMode } from "./components/BranchToolbar.logic";
+import { CLIENT_SETTINGS_STORAGE_KEY, useSettings, useUpdateSettings } from "./hooks/useSettings";
 import { normalizeRealtimeVoiceName } from "./voice/realtimeVoice";
 
-const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
+export {
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+  DEFAULT_TIMESTAMP_FORMAT,
+  DEFAULT_VOICE_INSTRUCTIONS,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+  TimestampFormat,
+  type UiScaleType as UiScale,
+  type VoicePlaybackRate,
+  type VoiceSilenceDuration,
+};
+
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-
-export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
-export type TimestampFormat = typeof TimestampFormat.Type;
-export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
-export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
-export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
-export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "manual";
-export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
-export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
-export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "manual";
-export const VoicePlaybackRate = Schema.Literals(["0.75", "1.0", "1.25", "1.5", "1.75", "2.0"]);
-export type VoicePlaybackRate = typeof VoicePlaybackRate.Type;
-export const VoiceSilenceDuration = Schema.Literals(["1.5", "2.0", "2.5", "3.0", "4.0"]);
-export type VoiceSilenceDuration = typeof VoiceSilenceDuration.Type;
-export const DEFAULT_VOICE_INSTRUCTIONS =
-  "Speak in a motivating, friendly, natural tone. Keep delivery clear, conversational, and concise without sounding robotic.";
 export const DEFAULT_VOICE_PLAYBACK_RATE_VALUE = 1.5;
 export const DEFAULT_VOICE_SILENCE_DURATION_MS = 3000;
 type CustomModelSettingsKey = "customCodexModels" | "customClaudeModels";
@@ -111,7 +125,7 @@ export interface AppModelOption {
 }
 
 function getDefaultAppSettings(options?: { isMobile?: boolean }): AppSettings {
-  const defaults = AppSettingsSchema.makeUnsafe({});
+  const defaults = flattenUnifiedSettings(DEFAULT_UNIFIED_SETTINGS);
   if (!options?.isMobile) {
     return defaults;
   }
@@ -123,7 +137,6 @@ function getDefaultAppSettings(options?: { isMobile?: boolean }): AppSettings {
   };
 }
 
-const DEFAULT_APP_SETTINGS = getDefaultAppSettings();
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
   codex: {
     provider: "codex",
@@ -182,6 +195,142 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
+}
+
+function flattenUnifiedSettings(settings: UnifiedSettings): AppSettings {
+  return normalizeAppSettings({
+    claudeBinaryPath:
+      settings.providers.claudeAgent.binaryPath ===
+      DEFAULT_SERVER_SETTINGS.providers.claudeAgent.binaryPath
+        ? ""
+        : settings.providers.claudeAgent.binaryPath,
+    codexBinaryPath:
+      settings.providers.codex.binaryPath === DEFAULT_SERVER_SETTINGS.providers.codex.binaryPath
+        ? ""
+        : settings.providers.codex.binaryPath,
+    codexHomePath: settings.providers.codex.homePath,
+    defaultThreadEnvMode: settings.defaultThreadEnvMode,
+    confirmThreadArchive: settings.confirmThreadArchive,
+    confirmThreadDelete: settings.confirmThreadDelete,
+    diffWordWrap: settings.diffWordWrap,
+    enableAssistantStreaming: settings.enableAssistantStreaming,
+    sidebarProjectSortOrder: settings.sidebarProjectSortOrder,
+    sidebarThreadSortOrder: settings.sidebarThreadSortOrder,
+    voiceEnabled: settings.voiceEnabled,
+    voiceInputEnabled: settings.voiceInputEnabled,
+    voiceWakePhraseEnabled: settings.voiceWakePhraseEnabled,
+    voiceLiveRepliesEnabled: settings.voiceLiveRepliesEnabled,
+    voiceAutoSpeakReplies: settings.voiceAutoSpeakReplies,
+    voiceHighlightSpokenSentence: settings.voiceHighlightSpokenSentence,
+    voiceModel: settings.voiceModel,
+    voiceName: settings.voiceName,
+    voiceInputDeviceId: settings.voiceInputDeviceId,
+    voicePlaybackRate: settings.voicePlaybackRate,
+    voiceSilenceDuration: settings.voiceSilenceDuration,
+    voiceInstructions: settings.voiceInstructions,
+    timestampFormat: settings.timestampFormat,
+    uiScale: settings.uiScale,
+    customCodexModels: settings.providers.codex.customModels,
+    customClaudeModels: settings.providers.claudeAgent.customModels,
+    textGenerationModel: settings.textGenerationModelSelection.model,
+  });
+}
+
+function toUnifiedPatch(patch: Partial<AppSettings>): Partial<UnifiedSettings> {
+  const next: Record<string, unknown> = {};
+
+  if (patch.claudeBinaryPath !== undefined) {
+    next.providers = {
+      ...(next.providers as Record<string, unknown> | undefined),
+      claudeAgent: {
+        ...((next.providers as Record<string, any> | undefined)?.claudeAgent as
+          | Record<string, unknown>
+          | undefined),
+        binaryPath: patch.claudeBinaryPath,
+      },
+    };
+  }
+
+  if (patch.codexBinaryPath !== undefined || patch.codexHomePath !== undefined) {
+    next.providers = {
+      ...(next.providers as Record<string, unknown> | undefined),
+      codex: {
+        ...((next.providers as Record<string, any> | undefined)?.codex as
+          | Record<string, unknown>
+          | undefined),
+        ...(patch.codexBinaryPath !== undefined ? { binaryPath: patch.codexBinaryPath } : {}),
+        ...(patch.codexHomePath !== undefined ? { homePath: patch.codexHomePath } : {}),
+      },
+    };
+  }
+
+  if (patch.customCodexModels !== undefined || patch.customClaudeModels !== undefined) {
+    next.providers = {
+      ...(next.providers as Record<string, unknown> | undefined),
+      ...(patch.customCodexModels !== undefined
+        ? {
+            codex: {
+              ...((next.providers as Record<string, any> | undefined)?.codex as
+                | Record<string, unknown>
+                | undefined),
+              customModels: patch.customCodexModels,
+            },
+          }
+        : {}),
+      ...(patch.customClaudeModels !== undefined
+        ? {
+            claudeAgent: {
+              ...((next.providers as Record<string, any> | undefined)?.claudeAgent as
+                | Record<string, unknown>
+                | undefined),
+              customModels: patch.customClaudeModels,
+            },
+          }
+        : {}),
+    };
+  }
+
+  if (patch.textGenerationModel !== undefined) {
+    const trimmed = patch.textGenerationModel?.trim();
+    if (trimmed) {
+      next.textGenerationModelSelection = {
+        provider: inferProviderForModel(trimmed, "codex"),
+        model: trimmed,
+      } satisfies ModelSelection;
+    }
+  }
+
+  const passthroughKeys = [
+    "defaultThreadEnvMode",
+    "confirmThreadArchive",
+    "confirmThreadDelete",
+    "diffWordWrap",
+    "enableAssistantStreaming",
+    "sidebarProjectSortOrder",
+    "sidebarThreadSortOrder",
+    "voiceEnabled",
+    "voiceInputEnabled",
+    "voiceWakePhraseEnabled",
+    "voiceLiveRepliesEnabled",
+    "voiceAutoSpeakReplies",
+    "voiceHighlightSpokenSentence",
+    "voiceModel",
+    "voiceName",
+    "voiceInputDeviceId",
+    "voicePlaybackRate",
+    "voiceSilenceDuration",
+    "voiceInstructions",
+    "timestampFormat",
+    "uiScale",
+  ] as const satisfies ReadonlyArray<keyof AppSettings & keyof UnifiedSettings>;
+
+  for (const key of passthroughKeys) {
+    if (patch[key] !== undefined) {
+      next[key] = patch[key];
+    }
+  }
+
+  return next as Partial<UnifiedSettings>;
 }
 
 export function getCustomModelsForProvider(
@@ -281,7 +430,6 @@ export function getCustomModelOptionsByProvider(
   };
 }
 
-<<<<<<< HEAD
 export function getGitTextGenerationModelOptions(
   settings: Pick<AppSettings, CustomModelSettingsKey>,
 ): ReadonlyArray<{ slug: string; name: string }> {
@@ -332,36 +480,47 @@ export function getProviderStartOptions(
 export function useAppSettings() {
   const isMobile = useIsMobile();
   const platformDefaults = useMemo(() => getDefaultAppSettings({ isMobile }), [isMobile]);
-  const [settings, setSettings] = useLocalStorage(
-    APP_SETTINGS_STORAGE_KEY,
-    DEFAULT_APP_SETTINGS,
-    AppSettingsSchema,
-  );
+  const settings = useSettings(flattenUnifiedSettings);
+  const { updateSettings: updateUnifiedSettings } = useUpdateSettings();
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => normalizeAppSettings({ ...prev, ...patch }));
+      updateUnifiedSettings(toUnifiedPatch(normalizeAppSettings({ ...settings, ...patch })));
     },
-    [setSettings],
+    [settings, updateUnifiedSettings],
   );
 
   const resetSettings = useCallback(() => {
-    setSettings(platformDefaults);
-  }, [platformDefaults, setSettings]);
+    updateUnifiedSettings(toUnifiedPatch(platformDefaults));
+  }, [platformDefaults, updateUnifiedSettings]);
 
+  const persistedClientSettings = getLocalStorageItem(
+    CLIENT_SETTINGS_STORAGE_KEY,
+    ClientSettingsSchema,
+  );
   useEffect(() => {
-    const persistedSettings = getLocalStorageItem(APP_SETTINGS_STORAGE_KEY, AppSettingsSchema);
-    if (persistedSettings !== null || !isMobile) {
+    if (persistedClientSettings !== null || !isMobile) {
       return;
     }
+    updateUnifiedSettings({
+      voiceInputEnabled: false,
+      voiceWakePhraseEnabled: false,
+    });
+  }, [isMobile, persistedClientSettings, updateUnifiedSettings]);
 
-    setSettings(platformDefaults);
-  }, [isMobile, platformDefaults, setSettings]);
+  const defaults =
+    persistedClientSettings !== null || !isMobile
+      ? platformDefaults
+      : {
+          ...platformDefaults,
+          voiceInputEnabled: false,
+          voiceWakePhraseEnabled: false,
+        };
 
   return {
     settings,
     updateSettings,
     resetSettings,
-    defaults: platformDefaults,
+    defaults,
   } as const;
 }

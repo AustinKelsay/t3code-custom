@@ -1,6 +1,7 @@
 import "../index.css";
 
 import {
+  DEFAULT_SERVER_SETTINGS,
   LOCAL_EXECUTION_TARGET_ID,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
@@ -54,6 +55,7 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    settings: DEFAULT_SERVER_SETTINGS,
   };
 }
 
