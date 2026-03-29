@@ -419,7 +419,7 @@ function ChatMarkdown({
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
           return (
-            <a {...props} href={href} target="_blank" rel="noreferrer">
+            <a {...props} href={href} target="_blank" rel="noopener noreferrer">
               {renderHighlightedChildren(props.children, "markdown-link")}
             </a>
           );
