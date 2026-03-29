@@ -68,10 +68,14 @@ if (!tailscaleIp) {
 
 const port = process.env.T3CODE_PORT?.trim() || "3773";
 const token = process.env.T3CODE_AUTH_TOKEN?.trim() || randomBytes(24).toString("hex");
+const bindHost = process.env.T3CODE_BIND_HOST?.trim() || "0.0.0.0";
 const phoneUrl = `http://${tailscaleIp}:${port}/?token=${token}`;
+const skipBuild = process.env.T3CODE_SKIP_BUILD === "1";
 
-runStep("building web bundle", ["run", "--cwd", "apps/web", "build"]);
-runStep("building server bundle", ["run", "--cwd", "apps/server", "build"]);
+if (!skipBuild) {
+  runStep("building web bundle", ["run", "--cwd", "apps/web", "build"]);
+  runStep("building server bundle", ["run", "--cwd", "apps/server", "build"]);
+}
 
 console.log(`[start:web:tailscale] phone URL: ${phoneUrl}`);
 console.log("[start:web:tailscale] keep this terminal open while the server is running");
@@ -85,7 +89,7 @@ const child = spawn(
     "start",
     "--",
     "--host",
-    tailscaleIp,
+    bindHost,
     "--port",
     port,
     "--auth-token",
