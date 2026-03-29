@@ -63,7 +63,7 @@ export function ThreadPageHeader({
     : [];
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 items-center gap-2 overflow-hidden sm:flex-1 sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0" />
         {activeProjectColor ? (
@@ -82,10 +82,10 @@ export function ThreadPageHeader({
         {activeProjectName && (
           <Badge
             variant="outline"
-            className="hidden min-w-0 shrink truncate sm:inline-flex"
+            className="hidden min-w-0 shrink overflow-hidden sm:inline-flex"
             style={resolveProjectBadgeStyle(activeProjectColor)}
           >
-            {activeProjectName}
+            <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
         {activeProjectName && isGitRepo === false && (
@@ -100,7 +100,7 @@ export function ThreadPageHeader({
       <div className="hidden min-w-0 justify-center sm:flex">
         <ThreadHeaderTabs activeTab={activeTab} mode="inline" threadId={activeThreadId} />
       </div>
-      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-1.5 sm:gap-2 @sm/header-actions:gap-3">
+      <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2 @3xl/header-actions:gap-3">
         {(openInCwd || githubTargetUrl) && (
           <div className="hidden sm:block">
             <OpenInPicker
