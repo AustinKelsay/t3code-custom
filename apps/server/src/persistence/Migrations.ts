@@ -37,6 +37,7 @@ import { Effect } from "effect";
 import Migration0022 from "./Migrations/022_ProjectionThreadOrdering.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadsArchivedAt.ts";
 import Migration0024 from "./Migrations/024_ProjectionThreadsArchivedAtIndex.ts";
+import Migration0025 from "./Migrations/025_LegacyProjectionModelColumns.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -73,6 +74,7 @@ const loader = Migrator.fromRecord({
   "22_ProjectionThreadOrdering": Migration0022,
   "23_ProjectionThreadsArchivedAt": Migration0023,
   "24_ProjectionThreadsArchivedAtIndex": Migration0024,
+  "25_LegacyProjectionModelColumns": Migration0025,
 });
 
 /**
