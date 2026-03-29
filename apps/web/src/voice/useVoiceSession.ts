@@ -68,8 +68,10 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
   const utteranceHandledRef = useRef(false);
   const autoStopProcessingStartedRef = useRef(false);
   const { playListeningStartCue, playListeningStopCue } = useVoiceCuePlayer();
-  const { startMonitoring: startVoiceActivityMonitoring, stopMonitoring: stopVoiceActivityMonitoring } =
-    useVoiceActivityMonitor();
+  const {
+    startMonitoring: startVoiceActivityMonitoring,
+    stopMonitoring: stopVoiceActivityMonitoring,
+  } = useVoiceActivityMonitor();
   const onFinalTranscriptRef = useRef(onFinalTranscript);
   useEffect(() => {
     onFinalTranscriptRef.current = onFinalTranscript;
@@ -829,10 +831,11 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
         dispatch({ type: "listening_started" });
         setSessionMuted(false);
         playListeningStartCue();
+        const mediaStream = mediaStreamRef.current;
         if (!keepHotMicRef.current && mediaStream) {
           void startVoiceActivityMonitoring(mediaStream, {
             silenceDurationMs: resolvedSilenceDurationMs,
-            onSustainedSilence: scheduleSilenceFallback,
+            onSustainedSilence: scheduleTranscriptWaitFallback,
           });
         }
         logVoiceTrace("listening_started", { captureMode });
@@ -854,7 +857,7 @@ export function useVoiceSession(input: UseVoiceSessionInput) {
       logVoiceError,
       logVoiceTrace,
       playListeningStartCue,
-      scheduleSilenceFallback,
+      scheduleTranscriptWaitFallback,
       resolvedSilenceDurationMs,
       startVoiceActivityMonitoring,
       setSessionMuted,
