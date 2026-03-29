@@ -45,6 +45,7 @@ import {
   applyClaudePromptEffortPrefix,
   getEffectiveClaudeCodeEffort,
   getReasoningEffortOptions,
+  resolveClaudeApiModelId,
   resolveReasoningEffortForProvider,
   supportsClaudeFastMode,
   supportsClaudeThinkingToggle,
@@ -2596,7 +2597,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.model ? { model: input.model } : {}),
+          ...(() => {
+            const apiModel = resolveClaudeApiModelId(input.model, input.modelOptions?.claudeAgent);
+            return apiModel ? { model: apiModel } : {};
+          })(),
           pathToClaudeCodeExecutable: providerOptions?.binaryPath ?? "claude",
           ...(effectiveEffort ? { effort: effectiveEffort } : {}),
           ...(permissionMode ? { permissionMode } : {}),
@@ -2778,8 +2782,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         if (input.model) {
+          const apiModel = resolveClaudeApiModelId(input.model, input.modelOptions?.claudeAgent);
           yield* Effect.tryPromise({
-            try: () => context.query.setModel(input.model),
+            try: () => context.query.setModel(apiModel ?? input.model),
             catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
           });
         }

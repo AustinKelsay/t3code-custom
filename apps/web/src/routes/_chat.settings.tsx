@@ -13,8 +13,8 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-  getAppModelOptions,
   getCustomModelsForProvider,
+  getGitTextGenerationModelOptions,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
@@ -397,11 +397,7 @@ function SettingsRouteView() {
     },
   });
 
-  const gitTextGenerationModelOptions = getAppModelOptions(
-    "codex",
-    settings.customCodexModels,
-    settings.textGenerationModel,
-  );
+  const gitTextGenerationModelOptions = getGitTextGenerationModelOptions(settings);
   const selectedGitTextGenerationModelLabel =
     gitTextGenerationModelOptions.find(
       (option) =>

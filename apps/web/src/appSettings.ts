@@ -281,6 +281,14 @@ export function getCustomModelOptionsByProvider(
   };
 }
 
+<<<<<<< HEAD
+export function getGitTextGenerationModelOptions(
+  settings: Pick<AppSettings, CustomModelSettingsKey>,
+): ReadonlyArray<{ slug: string; name: string }> {
+  const modelOptionsByProvider = getCustomModelOptionsByProvider(settings);
+  return [...modelOptionsByProvider.codex, ...modelOptionsByProvider.claudeAgent];
+}
+
 export function resolveVoicePlaybackRateValue(value: string | null | undefined): number {
   const parsedValue = Number(value);
   if (!Number.isFinite(parsedValue) || parsedValue <= 0) {

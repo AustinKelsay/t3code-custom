@@ -6,9 +6,12 @@ import {
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
+  getClaudeContextWindowOptions,
+  getDefaultClaudeContextWindow,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
   normalizeClaudeModelOptions,
+  resolveClaudeContextWindow,
   resolveReasoningEffortForProvider,
   supportsClaudeFastMode,
   supportsClaudeThinkingToggle,
@@ -49,6 +52,9 @@ function getSelectedClaudeTraits(
   effort: Exclude<ClaudeCodeEffort, "ultrathink"> | null;
   thinkingEnabled: boolean | null;
   fastModeEnabled: boolean;
+  contextWindow: string | null;
+  contextWindowOptions: ReadonlyArray<{ value: string; label: string; isDefault?: boolean }>;
+  defaultContextWindow: string | null;
   options: ReadonlyArray<ClaudeCodeEffort>;
   ultrathinkPromptControlled: boolean;
   supportsFastMode: boolean;
@@ -69,10 +75,17 @@ function getSelectedClaudeTraits(
     ? (modelOptions?.thinking ?? true)
     : null;
   const supportsFastMode = supportsClaudeFastMode(model);
+  const contextWindowOptions = getClaudeContextWindowOptions(model);
+  const defaultContextWindow = getDefaultClaudeContextWindow(model);
+  const contextWindow =
+    resolveClaudeContextWindow(model, modelOptions?.contextWindow) ?? defaultContextWindow;
   return {
     effort,
     thinkingEnabled,
     fastModeEnabled: supportsFastMode && modelOptions?.fastMode === true,
+    contextWindow,
+    contextWindowOptions,
+    defaultContextWindow,
     options,
     ultrathinkPromptControlled:
       supportsClaudeUltrathinkKeyword(model) && isClaudeUltrathinkPrompt(prompt),
@@ -99,6 +112,9 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
     effort,
     thinkingEnabled,
     fastModeEnabled,
+    contextWindow,
+    contextWindowOptions,
+    defaultContextWindow,
     options,
     ultrathinkPromptControlled,
     supportsFastMode,
@@ -141,7 +157,7 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
     ],
   );
 
-  if (effort === null && thinkingEnabled === null) {
+  if (effort === null && thinkingEnabled === null && contextWindowOptions.length <= 1) {
     return null;
   }
 
@@ -188,6 +204,37 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
           </MenuRadioGroup>
         </MenuGroup>
       ) : null}
+      {contextWindowOptions.length > 1 ? (
+        <>
+          <MenuDivider />
+          <MenuGroup>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+              Context window
+            </div>
+            <MenuRadioGroup
+              value={contextWindow ?? defaultContextWindow ?? ""}
+              onValueChange={(value) => {
+                setProviderModelOptions(
+                  threadId,
+                  PROVIDER,
+                  normalizeClaudeModelOptions(model, {
+                    ...modelOptions,
+                    contextWindow: value,
+                  }),
+                  { persistSticky: true },
+                );
+              }}
+            >
+              {contextWindowOptions.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                  {option.isDefault ? " (default)" : ""}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        </>
+      ) : null}
       {supportsFastMode ? (
         <>
           <MenuDivider />
@@ -226,8 +273,16 @@ export const ClaudeTraitsPicker = memo(function ClaudeTraitsPicker({
   const draft = useComposerThreadDraft(threadId);
   const prompt = draft.prompt;
   const modelOptions = draft.modelOptions?.[PROVIDER];
-  const { effort, thinkingEnabled, fastModeEnabled, ultrathinkPromptControlled, supportsFastMode } =
-    getSelectedClaudeTraits(model, prompt, modelOptions);
+  const {
+    effort,
+    thinkingEnabled,
+    fastModeEnabled,
+    contextWindow,
+    contextWindowOptions,
+    defaultContextWindow,
+    ultrathinkPromptControlled,
+    supportsFastMode,
+  } = getSelectedClaudeTraits(model, prompt, modelOptions);
   const triggerLabel = [
     ultrathinkPromptControlled
       ? "Ultrathink"
@@ -236,6 +291,9 @@ export const ClaudeTraitsPicker = memo(function ClaudeTraitsPicker({
         : thinkingEnabled === null
           ? null
           : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
+    contextWindowOptions.length > 1 && contextWindow && contextWindow !== defaultContextWindow
+      ? (contextWindowOptions.find((option) => option.value === contextWindow)?.label ?? null)
+      : null,
     ...(supportsFastMode && fastModeEnabled ? ["Fast"] : []),
   ]
     .filter(Boolean)

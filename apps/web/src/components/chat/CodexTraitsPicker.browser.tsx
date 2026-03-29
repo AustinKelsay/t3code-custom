@@ -117,6 +117,14 @@ describe("CodexTraitsPicker", () => {
   });
 
   it("persists sticky codex model options when traits change", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "claude-opus-4-6",
+      stickyModelByProvider: {
+        codex: "gpt-5.4",
+        claudeAgent: "claude-opus-4-6",
+      },
+      stickyActiveProvider: "claudeAgent",
+    });
     const mounted = await mountPicker({
       fastModeEnabled: false,
     });
@@ -129,6 +137,10 @@ describe("CodexTraitsPicker", () => {
         codex: {
           fastMode: true,
         },
+      });
+      expect(useComposerDraftStore.getState()).toMatchObject({
+        stickyActiveProvider: "codex",
+        stickyModel: "gpt-5.4",
       });
     } finally {
       await mounted.cleanup();

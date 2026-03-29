@@ -29,6 +29,12 @@ export interface SelectableModelOption {
   name: string;
 }
 
+export interface ClaudeContextWindowOption {
+  value: string;
+  label: string;
+  isDefault?: boolean;
+}
+
 export function getModelOptions(provider: ProviderKind = "codex") {
   return MODEL_OPTIONS_BY_PROVIDER[provider];
 }
@@ -56,6 +62,40 @@ export function supportsClaudeUltrathinkKeyword(model: string | null | undefined
 
 export function supportsClaudeThinkingToggle(model: string | null | undefined): boolean {
   return normalizeModelSlug(model, "claudeAgent") === CLAUDE_HAIKU_4_5_MODEL;
+}
+
+export function getClaudeContextWindowOptions(
+  model: string | null | undefined,
+): ReadonlyArray<ClaudeContextWindowOption> {
+  const normalized = normalizeModelSlug(model, "claudeAgent");
+  if (normalized === CLAUDE_OPUS_4_6_MODEL || normalized === CLAUDE_SONNET_4_6_MODEL) {
+    return [
+      { value: "200k", label: "200k" },
+      { value: "1m", label: "1M", isDefault: true },
+    ];
+  }
+  return [];
+}
+
+export function getDefaultClaudeContextWindow(model: string | null | undefined): string | null {
+  return getClaudeContextWindowOptions(model).find((option) => option.isDefault)?.value ?? null;
+}
+
+export function resolveClaudeContextWindow(
+  model: string | null | undefined,
+  value: string | null | undefined,
+): string | undefined {
+  const options = getClaudeContextWindowOptions(model);
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed.length > 0 && options.some((option) => option.value === trimmed)) {
+    return trimmed;
+  }
+
+  return getDefaultClaudeContextWindow(model) ?? undefined;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
@@ -216,6 +256,29 @@ export function resolveReasoningEffortForProvider(
   return options.includes(trimmed) ? (trimmed as ProviderReasoningEffort) : null;
 }
 
+export function trimOrNull<T extends string>(value: T | null | undefined): T | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? (trimmed as T) : null;
+}
+
+export function resolveClaudeApiModelId(
+  model: string | null | undefined,
+  modelOptions: ClaudeModelOptions | null | undefined,
+): string | null {
+  const resolvedModel = trimOrNull(model);
+  if (!resolvedModel) {
+    return null;
+  }
+
+  return resolveClaudeContextWindow(resolvedModel, modelOptions?.contextWindow) === "1m"
+    ? `${resolvedModel}[1m]`
+    : resolvedModel;
+}
+
 export function getEffectiveClaudeCodeEffort(
   effort: ClaudeCodeEffort | null | undefined,
 ): Exclude<ClaudeCodeEffort, "ultrathink"> | null {
@@ -258,10 +321,12 @@ export function normalizeClaudeModelOptions(
     supportsClaudeThinkingToggle(model) && modelOptions?.thinking === false ? false : undefined;
   const fastMode =
     supportsClaudeFastMode(model) && modelOptions?.fastMode === true ? true : undefined;
+  const contextWindow = resolveClaudeContextWindow(model, modelOptions?.contextWindow);
   const nextOptions: ClaudeModelOptions = {
     ...(thinking === false ? { thinking: false } : {}),
     ...(effort ? { effort } : {}),
     ...(fastMode ? { fastMode: true } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

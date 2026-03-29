@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
+  resolveClaudeContextWindow,
   resolveReasoningEffortForProvider,
   supportsClaudeUltrathinkKeyword,
 } from "@t3tools/shared/model";
@@ -83,13 +84,23 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
       const normalizedClaudeOptions = normalizeClaudeModelOptions(model, modelOptions?.claudeAgent);
       const ultrathinkActive =
         supportsClaudeUltrathinkKeyword(model) && isClaudeUltrathinkPrompt(prompt);
+      const resolvedContextWindow = resolveClaudeContextWindow(
+        model,
+        modelOptions?.claudeAgent?.contextWindow,
+      );
 
       return {
         provider: "claudeAgent",
         promptEffort,
-        modelOptionsForDispatch: normalizedClaudeOptions
-          ? { claudeAgent: normalizedClaudeOptions }
-          : undefined,
+        modelOptionsForDispatch:
+          normalizedClaudeOptions || resolvedContextWindow
+            ? {
+                claudeAgent: {
+                  ...normalizedClaudeOptions,
+                  ...(resolvedContextWindow ? { contextWindow: resolvedContextWindow } : {}),
+                },
+              }
+            : undefined,
         ...(ultrathinkActive ? { composerFrameClassName: "ultrathink-frame" } : {}),
         ...(ultrathinkActive
           ? { composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]" }

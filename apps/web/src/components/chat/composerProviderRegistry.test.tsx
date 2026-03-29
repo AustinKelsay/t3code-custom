@@ -53,7 +53,34 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "claudeAgent",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        claudeAgent: {
+          contextWindow: "1m",
+        },
+      },
+    });
+  });
+
+  it("preserves Claude context window selections for dispatch", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          contextWindow: "200k",
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: "high",
+      modelOptionsForDispatch: {
+        claudeAgent: {
+          contextWindow: "200k",
+        },
+      },
     });
   });
 
@@ -75,6 +102,7 @@ describe("getComposerProviderState", () => {
       modelOptionsForDispatch: {
         claudeAgent: {
           effort: "medium",
+          contextWindow: "1m",
         },
       },
       composerFrameClassName: "ultrathink-frame",
@@ -123,7 +151,11 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "claudeAgent",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        claudeAgent: {
+          contextWindow: "1m",
+        },
+      },
     });
   });
 

@@ -14,6 +14,7 @@ async function mountPicker(props?: {
   effort?: "low" | "medium" | "high" | "max" | "ultrathink" | null;
   thinkingEnabled?: boolean | null;
   fastModeEnabled?: boolean;
+  contextWindow?: "200k" | "1m" | null;
 }) {
   const threadId = ThreadId.makeUnsafe("thread-claude-traits");
   const draftsByThreadId = {} as ReturnType<
@@ -32,6 +33,7 @@ async function mountPicker(props?: {
         ...(props?.effort ? { effort: props.effort } : {}),
         ...(props?.thinkingEnabled === false ? { thinking: false } : {}),
         ...(props?.fastModeEnabled ? { fastMode: true } : {}),
+        ...(props?.contextWindow ? { contextWindow: props.contextWindow } : {}),
       },
     },
     runtimeMode: null,
@@ -148,6 +150,25 @@ describe("ClaudeTraitsPicker", () => {
     }
   });
 
+  it("shows context window controls for Sonnet", async () => {
+    const mounted = await mountPicker({
+      model: "claude-sonnet-4-6",
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("Context window");
+        expect(text).toContain("200k");
+        expect(text).toContain("1M (default)");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows prompt-controlled Ultrathink state with disabled effort controls", async () => {
     const mounted = await mountPicker({
       effort: "high",
@@ -175,6 +196,14 @@ describe("ClaudeTraitsPicker", () => {
   });
 
   it("persists sticky claude model options when traits change", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "gpt-5.4",
+      stickyModelByProvider: {
+        codex: "gpt-5.4",
+        claudeAgent: "claude-opus-4-6",
+      },
+      stickyActiveProvider: "codex",
+    });
     const mounted = await mountPicker({
       model: "claude-opus-4-6",
       effort: "medium",
@@ -189,6 +218,10 @@ describe("ClaudeTraitsPicker", () => {
         claudeAgent: {
           effort: "max",
         },
+      });
+      expect(useComposerDraftStore.getState()).toMatchObject({
+        stickyActiveProvider: "claudeAgent",
+        stickyModel: "claude-opus-4-6",
       });
     } finally {
       await mounted.cleanup();

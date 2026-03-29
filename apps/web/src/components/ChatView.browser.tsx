@@ -1424,6 +1424,64 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("hydrates from the active provider's sticky model memory", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "claude-opus-4-6",
+      stickyModelByProvider: {
+        codex: "gpt-5.3-codex",
+        claudeAgent: "claude-opus-4-6",
+      },
+      stickyActiveProvider: "claudeAgent",
+      stickyModelOptions: {
+        codex: {
+          fastMode: true,
+        },
+        claudeAgent: {
+          effort: "max",
+          fastMode: true,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-provider-memory-test" as MessageId,
+        targetText: "sticky provider memory test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new sticky provider-memory draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+          claudeAgent: {
+            effort: "max",
+            fastMode: true,
+          },
+        },
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("falls back to defaults when no sticky composer settings exist", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

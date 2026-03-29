@@ -12,6 +12,7 @@ import {
   getCustomModelsByProvider,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
+  getGitTextGenerationModelOptions,
   getProviderStartOptions,
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
@@ -192,6 +193,15 @@ describe("provider-indexed custom model settings", () => {
     expect(
       modelOptionsByProvider.claudeAgent.some((option) => option.slug === "claude/custom-opus"),
     ).toBe(true);
+  });
+
+  it("builds git text-generation model options across codex and claude", () => {
+    const gitModelOptions = getGitTextGenerationModelOptions(settings);
+
+    expect(gitModelOptions.some((option) => option.slug === "gpt-5.4")).toBe(true);
+    expect(gitModelOptions.some((option) => option.slug === "claude-sonnet-4-6")).toBe(true);
+    expect(gitModelOptions.some((option) => option.slug === "custom/codex-model")).toBe(true);
+    expect(gitModelOptions.some((option) => option.slug === "claude/custom-opus")).toBe(true);
   });
 
   it("normalizes and deduplicates custom model options per provider", () => {
