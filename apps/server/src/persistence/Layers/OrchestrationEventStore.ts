@@ -67,18 +67,48 @@ const READ_PAGE_SIZE = 500;
 function normalizeLegacyPersistedRow(
   row: Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema>,
 ): Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema> {
-  // Older project.created rows were stored before defaultModel existed.
-  if (
-    row.type === "project.created" &&
-    row.payload !== null &&
-    typeof row.payload === "object" &&
-    !("defaultModel" in row.payload)
-  ) {
+  // Older event rows used nested *Selection payloads before the flat model fields existed.
+  if (row.type === "project.created" && row.payload !== null && typeof row.payload === "object") {
+    const defaultModel =
+      "defaultModel" in row.payload
+        ? row.payload.defaultModel
+        : "defaultModelSelection" in row.payload &&
+            row.payload.defaultModelSelection !== null &&
+            typeof row.payload.defaultModelSelection === "object" &&
+            "model" in row.payload.defaultModelSelection &&
+            typeof row.payload.defaultModelSelection.model === "string"
+          ? row.payload.defaultModelSelection.model
+          : null;
+
     return {
       ...row,
       payload: {
         ...row.payload,
-        defaultModel: null,
+        defaultModel,
+      },
+    };
+  }
+
+  if (
+    row.type === "thread.created" &&
+    row.payload !== null &&
+    typeof row.payload === "object" &&
+    !("model" in row.payload)
+  ) {
+    const model =
+      "modelSelection" in row.payload &&
+      row.payload.modelSelection !== null &&
+      typeof row.payload.modelSelection === "object" &&
+      "model" in row.payload.modelSelection &&
+      typeof row.payload.modelSelection.model === "string"
+        ? row.payload.modelSelection.model
+        : "gpt-5-codex";
+
+    return {
+      ...row,
+      payload: {
+        ...row.payload,
+        model,
       },
     };
   }

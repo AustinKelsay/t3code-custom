@@ -174,4 +174,68 @@ layer("OrchestrationEventStore", (it) => {
       assert.equal(event.payload.defaultModel, null);
     }),
   );
+
+  it.effect("replays legacy thread.created rows that used modelSelection", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.makeUnsafe("evt-store-legacy-thread-created")},
+          ${"thread"},
+          ${ProjectId.makeUnsafe("project-legacy-thread-created")},
+          ${0},
+          ${"thread.created"},
+          ${now},
+          ${CommandId.makeUnsafe("cmd-store-legacy-thread-created")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            threadId: "thread-legacy-thread-created",
+            projectId: "project-legacy-thread-created",
+            title: "Legacy Thread",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-opus-4-6",
+            },
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      const [event] = replayed;
+      assert.isDefined(event);
+      if (event.type !== "thread.created") {
+        throw new Error(`Expected thread.created event, received ${event.type}`);
+      }
+      assert.equal(event.payload.model, "claude-opus-4-6");
+    }),
+  );
 });
