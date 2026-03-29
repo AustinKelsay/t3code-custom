@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
 import { PanelLeftIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { cn } from "../lib/utils";
 import { openInPreferredEditor } from "../editorPreferences";
 import { gitBranchesQueryOptions, gitWorkingTreeDiffQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
@@ -64,15 +65,18 @@ export default function DiffPanel({
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>(
     variant === "full" ? "split" : "stacked",
   );
+  const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>({});
   const [isMobileFileTreeOpen, setIsMobileFileTreeOpen] = useState(true);
   const fileTreeViewportRef = useRef<HTMLDivElement>(null);
   const patchViewportRef = useRef<HTMLDivElement>(null);
+  const previousDiffOpenRef = useRef(false);
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const diffOpen = diffSearch.diff === "1" || variant === "full";
   const activeThreadId = routeThreadId;
   const activeThread = useStore((store) =>
     activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
@@ -295,6 +299,13 @@ export default function DiffPanel({
   }, [isUncommittedSelection, routeThreadId, selectedTurnId, variant]);
 
   useEffect(() => {
+    if (diffOpen && !previousDiffOpenRef.current) {
+      setDiffWordWrap(settings.diffWordWrap);
+    }
+    previousDiffOpenRef.current = diffOpen;
+  }, [diffOpen, settings.diffWordWrap]);
+
+  useEffect(() => {
     if (!shouldCollapseFileTreeOnMobile) {
       setIsMobileFileTreeOpen(true);
     }
@@ -514,6 +525,7 @@ export default function DiffPanel({
     <DiffPanelHeader
       closeDiff={closeDiff}
       diffRenderMode={diffRenderMode}
+      diffWordWrap={diffWordWrap}
       isUncommittedSelection={isUncommittedSelection}
       onOpenFullDiff={openFullDiff}
       onSelectTurn={selectTurn}
@@ -524,6 +536,7 @@ export default function DiffPanel({
       selectedRenderedTurnId={selectedTurn?.turnId ?? null}
       selectedTurnId={selectedTurnId}
       setDiffRenderMode={setDiffRenderMode}
+      setDiffWordWrap={setDiffWordWrap}
       shouldUseCompactMobileHeader={shouldUseCompactMobileHeader}
       timestampFormat={settings.timestampFormat}
       turnCountByTurnId={inferredCheckpointTurnCountByTurnId}
@@ -636,6 +649,7 @@ export default function DiffPanel({
                 <DiffFileDiffList
                   className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
                   diffRenderMode={diffRenderMode}
+                  diffWordWrap={diffWordWrap}
                   fileDiffs={visibleFileDiffs}
                   onFileClickCapture={buildFileClickCaptureHandler}
                   renderKeyPrefix={`${diffSelectionRenderKey}:full`}
@@ -644,9 +658,21 @@ export default function DiffPanel({
                 />
               ) : (
                 <div className="diff-raw-surface h-full overflow-auto p-2">
-                  <div className="diff-render-canvas min-w-full w-max space-y-2">
+                  <div
+                    className={cn(
+                      "diff-render-canvas min-w-full space-y-2",
+                      diffWordWrap ? "w-full" : "w-max",
+                    )}
+                  >
                     <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                    <pre className="max-h-[72vh] min-w-[48rem] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90 max-md:min-w-[42rem]">
+                    <pre
+                      className={cn(
+                        "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                        diffWordWrap
+                          ? "overflow-auto whitespace-pre-wrap wrap-break-word"
+                          : "min-w-[48rem] overflow-auto max-md:min-w-[42rem]",
+                      )}
+                    >
                       {renderablePatch.text}
                     </pre>
                   </div>
@@ -681,6 +707,7 @@ export default function DiffPanel({
             <DiffFileDiffList
               className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
               diffRenderMode={diffRenderMode}
+              diffWordWrap={diffWordWrap}
               fileDiffs={visibleFileDiffs}
               onFileClickCapture={buildFileClickCaptureHandler}
               renderKeyPrefix={`${diffSelectionRenderKey}:compact`}
@@ -691,7 +718,14 @@ export default function DiffPanel({
             <div className="diff-raw-surface h-full overflow-auto p-2">
               <div className="space-y-2">
                 <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                <pre className="max-h-[72vh] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
+                <pre
+                  className={cn(
+                    "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                    diffWordWrap
+                      ? "overflow-auto whitespace-pre-wrap wrap-break-word"
+                      : "overflow-auto",
+                  )}
+                >
                   {renderablePatch.text}
                 </pre>
               </div>

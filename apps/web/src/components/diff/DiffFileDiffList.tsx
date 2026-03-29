@@ -16,6 +16,7 @@ type DiffThemeType = "light" | "dark";
 
 function DiffFileDiffEntry(props: {
   diffRenderMode: DiffRenderMode;
+  diffWordWrap: boolean;
   fileDiff: FileDiffMetadata;
   onClickCapture?: (event: MouseEvent<HTMLDivElement>) => void;
   renderKeyPrefix: string;
@@ -32,7 +33,7 @@ function DiffFileDiffEntry(props: {
       data-diff-render-mode={props.diffRenderMode}
       className={cn(
         "diff-render-file mb-2 rounded-md first:mt-2 last:mb-0",
-        props.diffRenderMode === "split" ? "w-full" : "min-w-full w-max",
+        props.diffRenderMode === "split" || props.diffWordWrap ? "w-full" : "min-w-full w-max",
       )}
       onClickCapture={props.onClickCapture}
     >
@@ -42,6 +43,7 @@ function DiffFileDiffEntry(props: {
         options={{
           diffStyle: props.diffRenderMode === "split" ? "split" : "unified",
           lineDiffType: "none",
+          overflow: props.diffWordWrap ? "wrap" : "scroll",
           theme: resolveDiffThemeName(props.resolvedTheme),
           themeType: props.resolvedTheme,
           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
@@ -55,12 +57,16 @@ function DiffRenderCanvas(props: {
   children: ReactNode;
   className?: string;
   diffRenderMode: DiffRenderMode;
+  diffWordWrap: boolean;
 }) {
   return (
     <div
       className={
         props.className ??
-        cn("diff-render-canvas min-w-full", props.diffRenderMode === "split" ? "w-full" : "w-max")
+        cn(
+          "diff-render-canvas min-w-full",
+          props.diffRenderMode === "split" || props.diffWordWrap ? "w-full" : "w-max",
+        )
       }
       data-diff-render-mode={props.diffRenderMode}
     >
@@ -72,6 +78,7 @@ function DiffRenderCanvas(props: {
 export function DiffFileDiffList(props: {
   className: string;
   diffRenderMode: DiffRenderMode;
+  diffWordWrap: boolean;
   fileDiffs: readonly FileDiffMetadata[];
   onFileClickCapture: (filePath: string) => (event: MouseEvent<HTMLDivElement>) => void;
   renderKeyPrefix: string;
@@ -88,17 +95,19 @@ export function DiffFileDiffList(props: {
         <div
           className={cn(
             props.className,
-            props.diffRenderMode === "split" && "overflow-x-hidden overflow-y-auto",
+            (props.diffRenderMode === "split" || props.diffWordWrap) &&
+              "overflow-x-hidden overflow-y-auto",
           )}
           data-diff-render-mode={props.diffRenderMode}
         >
-          <DiffRenderCanvas diffRenderMode={props.diffRenderMode}>
+          <DiffRenderCanvas diffRenderMode={props.diffRenderMode} diffWordWrap={props.diffWordWrap}>
             {props.fileDiffs.map((fileDiff) => {
               const filePath = resolveFileDiffPath(fileDiff);
               return (
                 <DiffFileDiffEntry
                   key={`${props.renderKeyPrefix}:${buildFileDiffRenderKey(fileDiff)}:${props.resolvedTheme}`}
                   diffRenderMode={props.diffRenderMode}
+                  diffWordWrap={props.diffWordWrap}
                   fileDiff={fileDiff}
                   onClickCapture={props.onFileClickCapture(filePath)}
                   renderKeyPrefix={props.renderKeyPrefix}
@@ -113,7 +122,8 @@ export function DiffFileDiffList(props: {
           key={`${props.renderKeyPrefix}:virtualizer`}
           className={cn(
             props.className,
-            props.diffRenderMode === "split" && "overflow-x-hidden overflow-y-auto",
+            (props.diffRenderMode === "split" || props.diffWordWrap) &&
+              "overflow-x-hidden overflow-y-auto",
           )}
           config={{
             overscrollSize: 600,
@@ -123,9 +133,10 @@ export function DiffFileDiffList(props: {
           <DiffRenderCanvas
             className={cn(
               "diff-render-canvas min-w-full",
-              props.diffRenderMode === "split" ? "w-full" : "w-max",
+              props.diffRenderMode === "split" || props.diffWordWrap ? "w-full" : "w-max",
             )}
             diffRenderMode={props.diffRenderMode}
+            diffWordWrap={props.diffWordWrap}
           >
             {props.fileDiffs.map((fileDiff) => {
               const filePath = resolveFileDiffPath(fileDiff);
@@ -133,6 +144,7 @@ export function DiffFileDiffList(props: {
                 <DiffFileDiffEntry
                   key={`${props.renderKeyPrefix}:${buildFileDiffRenderKey(fileDiff)}:${props.resolvedTheme}`}
                   diffRenderMode={props.diffRenderMode}
+                  diffWordWrap={props.diffWordWrap}
                   fileDiff={fileDiff}
                   onClickCapture={props.onFileClickCapture(filePath)}
                   renderKeyPrefix={props.renderKeyPrefix}

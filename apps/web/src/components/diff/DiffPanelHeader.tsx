@@ -5,6 +5,7 @@ import {
   Columns2Icon,
   Maximize2Icon,
   Rows3Icon,
+  TextWrapIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -28,6 +29,7 @@ export type DiffRenderMode = "stacked" | "split";
 export function DiffPanelHeader(props: {
   closeDiff: () => void;
   diffRenderMode: DiffRenderMode;
+  diffWordWrap: boolean;
   isUncommittedSelection: boolean;
   onOpenFullDiff: () => void;
   onSelectTurn: (turnId: TurnId) => void;
@@ -38,6 +40,7 @@ export function DiffPanelHeader(props: {
   selectedRenderedTurnId: TurnId | null;
   selectedTurnId: TurnId | null;
   setDiffRenderMode: (mode: DiffRenderMode) => void;
+  setDiffWordWrap: (wrap: boolean) => void;
   shouldUseCompactMobileHeader: boolean;
   timestampFormat: TimestampFormat;
   turnCountByTurnId: Record<string, number | undefined>;
@@ -260,6 +263,20 @@ export function DiffPanelHeader(props: {
             <Columns2Icon className="size-3" />
           </Toggle>
         </ToggleGroup>
+        <Toggle
+          aria-label={
+            props.diffWordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"
+          }
+          title={props.diffWordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+          variant={props.shouldUseCompactMobileHeader ? "default" : "outline"}
+          size="xs"
+          pressed={props.diffWordWrap}
+          onPressedChange={(pressed) => {
+            props.setDiffWordWrap(Boolean(pressed));
+          }}
+        >
+          <TextWrapIcon className="size-3" />
+        </Toggle>
         {props.variant === "compact" && props.routeThreadId && (
           <Button
             type="button"
