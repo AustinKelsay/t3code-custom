@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DEFAULT_VOICE_PLAYBACK_RATE_VALUE } from "../appSettings";
 import { ensureNativeApi } from "../nativeApi";
@@ -60,6 +60,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   const onPlaybackIdleRef = useRef(onPlaybackIdle);
   const processQueueRef = useRef<(() => Promise<void>) | null>(null);
   const currentPlaybackTextRef = useRef("");
+  const [isPlaybackPaused, setIsPlaybackPaused] = useState(false);
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -230,6 +231,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     revokeObjectUrl();
     revokePrefetchedClip();
     releaseAudioElement();
+    setIsPlaybackPaused(false);
   }, [
     emitPlaybackIdle,
     finishUtterance,
@@ -481,6 +483,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
       }
       playingRef.current = false;
       pausedRef.current = false;
+      setIsPlaybackPaused(false);
       revokeObjectUrl();
       emitPlaybackIdle();
       if (queueRef.current.length === 0) {
@@ -567,6 +570,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     }
 
     pausedRef.current = true;
+    setIsPlaybackPaused(true);
     clearIdleFinishTimeout();
     clearPlaybackWatchdog();
     if (audioElement && playingRef.current) {
@@ -582,6 +586,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     }
 
     pausedRef.current = false;
+    setIsPlaybackPaused(false);
     clearIdleFinishTimeout();
     const audioElement = audioElementRef.current;
     if (audioElement && audioElement.currentSrc) {
@@ -602,6 +607,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
     playbackBlockedRef.current = false;
     blockedPlaybackHadActivityRef.current = false;
     pausedRef.current = false;
+    setIsPlaybackPaused(false);
     synthInFlightRef.current = false;
     pendingQueueSkipCountRef.current = 0;
     currentSkipPendingRef.current = false;
@@ -683,6 +689,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
       clearPlaybackWatchdog();
       playingRef.current = false;
       pausedRef.current = false;
+      setIsPlaybackPaused(false);
       queueRef.current = [];
       emitPlaybackIdle();
       revokeObjectUrl();
@@ -723,6 +730,23 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
 
   useEffect(() => {
     if (!enabled) {
+      return;
+    }
+    if (playbackBlockedRef.current) {
+      return;
+    }
+    if (pausedRef.current) {
+      resumeSpeaking();
+      return;
+    }
+    if (queueRef.current.length > 0 || prefetchedClipRef.current !== null) {
+      void maybePrefetchNextSentence();
+      void processQueueRef.current?.();
+    }
+  }, [enabled, maybePrefetchNextSentence, resumeSpeaking]);
+
+  useEffect(() => {
+    if (!enabled) {
       stopSpeaking();
       closeSession();
     }
@@ -731,6 +755,7 @@ export function useRealtimeSpeechOutput(input: UseRealtimeSpeechOutputInput) {
   useEffect(() => closeSession, [closeSession]);
 
   return {
+    isPlaybackPaused,
     replaceSpeechQueue,
     speakText,
     skipCurrentSentence,

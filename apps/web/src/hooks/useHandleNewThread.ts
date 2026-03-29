@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
-import { inferProviderForModel } from "@t3tools/shared/model";
 import {
   type DraftThreadEnvMode,
   type DraftThreadState,
@@ -20,6 +19,8 @@ export function useHandleNewThread() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const stickyModel = useComposerDraftStore((store) => store.stickyModel);
+  const stickyModelByProvider = useComposerDraftStore((store) => store.stickyModelByProvider);
+  const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
   const stickyModelOptions = useComposerDraftStore((store) => store.stickyModelOptions);
   const navigate = useNavigate();
   const routeThreadId = useParams({
@@ -135,9 +136,16 @@ export function useHandleNewThread() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        if (stickyModel) {
-          setProvider(threadId, inferProviderForModel(stickyModel));
-          setModel(threadId, stickyModel);
+        const nextStickyProvider = stickyActiveProvider;
+        const nextStickyModel =
+          nextStickyProvider === null
+            ? stickyModel
+            : (stickyModelByProvider[nextStickyProvider] ?? null);
+        if (nextStickyProvider) {
+          setProvider(threadId, nextStickyProvider);
+        }
+        if (nextStickyModel) {
+          setModel(threadId, nextStickyModel);
         }
         if (Object.keys(stickyModelOptions).length > 0) {
           setModelOptions(threadId, stickyModelOptions);
@@ -149,7 +157,15 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, projects, routeThreadId, stickyModel, stickyModelOptions],
+    [
+      navigate,
+      projects,
+      routeThreadId,
+      stickyActiveProvider,
+      stickyModel,
+      stickyModelByProvider,
+      stickyModelOptions,
+    ],
   );
 
   return {

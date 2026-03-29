@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { LOCAL_EXECUTION_TARGET_ID, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -68,6 +68,8 @@ function resetComposerDraftStore() {
     draftThreadsByThreadId: {},
     projectDraftThreadIdByProjectId: {},
     stickyModel: null,
+    stickyModelByProvider: {},
+    stickyActiveProvider: null,
     stickyModelOptions: {},
   });
 }
@@ -441,6 +443,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toEqual({
       threadId,
       projectId,
+      targetId: LOCAL_EXECUTION_TARGET_ID,
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
@@ -450,6 +453,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
       projectId,
+      targetId: LOCAL_EXECUTION_TARGET_ID,
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
@@ -640,6 +644,8 @@ describe("composerDraftStore modelOptions", () => {
   it("replaces only the targeted provider model options", () => {
     const store = useComposerDraftStore.getState();
 
+    store.setStickyModel("gpt-5.3-codex");
+    store.setStickyModel("claude-opus-4-6");
     store.setModelOptions(threadId, {
       codex: {
         reasoningEffort: "xhigh",
@@ -675,11 +681,17 @@ describe("composerDraftStore modelOptions", () => {
         thinking: false,
       },
     });
+    expect(useComposerDraftStore.getState()).toMatchObject({
+      stickyActiveProvider: "claudeAgent",
+      stickyModel: "claude-opus-4-6",
+    });
   });
 
   it("removes only the targeted provider entry when next options normalize empty", () => {
     const store = useComposerDraftStore.getState();
 
+    store.setStickyModel("gpt-5.4");
+    store.setStickyModel("claude-opus-4-6");
     store.setModelOptions(threadId, {
       codex: {
         reasoningEffort: "xhigh",
@@ -698,7 +710,11 @@ describe("composerDraftStore modelOptions", () => {
         reasoningEffort: "xhigh",
       },
     });
-    expect(useComposerDraftStore.getState().stickyModelOptions).toEqual({});
+    expect(useComposerDraftStore.getState()).toMatchObject({
+      stickyActiveProvider: "claudeAgent",
+      stickyModel: "claude-opus-4-6",
+      stickyModelOptions: {},
+    });
   });
 
   it("removes model options entirely when the last provider entry normalizes empty", () => {
@@ -826,6 +842,10 @@ describe("composerDraftStore sticky composer settings", () => {
 
     expect(useComposerDraftStore.getState()).toMatchObject({
       stickyModel: "gpt-5.3-codex",
+      stickyModelByProvider: {
+        codex: "gpt-5.3-codex",
+      },
+      stickyActiveProvider: "codex",
       stickyModelOptions: {
         codex: {
           reasoningEffort: "medium",
@@ -845,6 +865,23 @@ describe("composerDraftStore sticky composer settings", () => {
     });
 
     expect(useComposerDraftStore.getState().stickyModelOptions).toEqual({});
+  });
+
+  it("remembers sticky models separately for each provider", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyModel("gpt-5.3-codex");
+    store.setStickyModel("claude-opus-4-6");
+    store.setStickyModel("gpt-5.4");
+
+    expect(useComposerDraftStore.getState()).toMatchObject({
+      stickyModel: "gpt-5.4",
+      stickyModelByProvider: {
+        codex: "gpt-5.4",
+        claudeAgent: "claude-opus-4-6",
+      },
+      stickyActiveProvider: "codex",
+    });
   });
 });
 

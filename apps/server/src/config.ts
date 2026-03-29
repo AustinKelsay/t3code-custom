@@ -18,6 +18,7 @@ export type RuntimeMode = "web" | "desktop";
 export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
+  readonly settingsPath: string;
   readonly keybindingsConfigPath: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
@@ -59,6 +60,7 @@ export const deriveServerPaths = Effect.fn(function* (
   return {
     stateDir,
     dbPath,
+    settingsPath: join(stateDir, "settings.json"),
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,

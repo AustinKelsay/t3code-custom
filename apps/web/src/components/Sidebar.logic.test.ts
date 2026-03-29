@@ -1,14 +1,62 @@
 import { LOCAL_EXECUTION_TARGET_ID } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
+import type { Project, Thread } from "../types";
 
 import {
+  filterSidebarProjects,
+  getVisibleThreadsForProject,
+  getProjectSortTimestamp,
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  sortSidebarProjectResults,
+  sortThreadsForSidebar,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: "project-1" as never,
+    name: "Alpha Project",
+    cwd: "/tmp/project",
+    targetId: LOCAL_EXECUTION_TARGET_ID,
+    model: "gpt-5",
+    color: null,
+    expanded: true,
+    scripts: [],
+    ...overrides,
+  };
+}
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: "thread-1" as never,
+    codexThreadId: null,
+    projectId: "project-1" as never,
+    targetId: LOCAL_EXECUTION_TARGET_ID,
+    title: "Fix auth bug",
+    model: "gpt-5",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    archivedAt: null,
+    pinnedAt: null,
+    sortOrder: 1,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
+    ...overrides,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -82,6 +130,315 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("filterSidebarProjects", () => {
+  it("returns all projects and their threads when the filter is empty", () => {
+    const project = makeProject();
+    const thread = makeThread();
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads: [thread],
+        filterText: "   ",
+      }),
+    ).toEqual([{ project, threads: [thread], projectMatched: false }]);
+  });
+
+  it("matches a project name and keeps all of its threads", () => {
+    const project = makeProject({ name: "Payments API" });
+    const threads = [
+      makeThread({ id: "thread-1" as never, title: "Investigate retry bug" }),
+      makeThread({ id: "thread-2" as never, title: "Refactor webhooks" }),
+    ];
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads,
+        filterText: "payments",
+      }),
+    ).toEqual([{ project, threads, projectMatched: true }]);
+  });
+
+  it("matches thread titles and narrows a project to only those threads", () => {
+    const project = makeProject();
+    const matchingThread = makeThread({ id: "thread-1" as never, title: "Fix auth bug" });
+    const otherThread = makeThread({ id: "thread-2" as never, title: "Update docs" });
+
+    expect(
+      filterSidebarProjects({
+        projects: [project],
+        threads: [matchingThread, otherThread],
+        filterText: "auth",
+      }),
+    ).toEqual([{ project, threads: [matchingThread], projectMatched: false }]);
+  });
+
+  it("omits projects with no matching project name or thread title", () => {
+    expect(
+      filterSidebarProjects({
+        projects: [makeProject()],
+        threads: [makeThread()],
+        filterText: "does-not-exist",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("getVisibleThreadsForProject", () => {
+  it("returns all threads when the list is expanded", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "thread-2" as never,
+        isThreadListExpanded: true,
+        previewLimit: 1,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: threads,
+    });
+  });
+
+  it("keeps the active thread visible when it falls outside the preview slice", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-3" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "thread-3" as never,
+        isThreadListExpanded: false,
+        previewLimit: 2,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: [threads[0]!, threads[1]!, threads[2]!],
+    });
+  });
+
+  it("falls back to the preview slice when the active thread is absent", () => {
+    const threads = [
+      makeThread({ id: "thread-1" as never }),
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-3" as never }),
+    ];
+
+    expect(
+      getVisibleThreadsForProject({
+        threads,
+        activeThreadId: "missing" as never,
+        isThreadListExpanded: false,
+        previewLimit: 2,
+      }),
+    ).toEqual({
+      hasHiddenThreads: true,
+      visibleThreads: [threads[0]!, threads[1]!],
+    });
+  });
+});
+
+describe("sortThreadsForSidebar", () => {
+  it("preserves manual ordering", () => {
+    const threads = [
+      makeThread({ id: "thread-2" as never }),
+      makeThread({ id: "thread-1" as never }),
+    ];
+
+    expect(sortThreadsForSidebar(threads, "manual").map((thread) => thread.id)).toEqual([
+      "thread-2",
+      "thread-1",
+    ]);
+  });
+
+  it("sorts threads by latest user message for updated_at", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "older",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+          messages: [
+            {
+              id: "message-2" as never,
+              role: "user",
+              text: "newer",
+              createdAt: "2026-03-09T10:06:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:06:00.000Z",
+            },
+          ],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-2", "thread-1"]);
+  });
+
+  it("keeps pinned threads above recency-sorted threads", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "older pinned thread",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          pinnedAt: null,
+          messages: [
+            {
+              id: "message-2" as never,
+              role: "user",
+              text: "newer unpinned thread",
+              createdAt: "2026-03-09T10:06:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:06:00.000Z",
+            },
+          ],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+
+  it("sorts threads by createdAt for created_at", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: "thread-1" as never,
+          createdAt: "2026-03-09T10:05:00.000Z",
+        }),
+        makeThread({
+          id: "thread-2" as never,
+          createdAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      "created_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
+describe("sortSidebarProjectResults", () => {
+  it("preserves manual project ordering", () => {
+    const results = [
+      {
+        project: makeProject({ id: "project-2" as never, name: "Second" }),
+        threads: [],
+        projectMatched: false,
+      },
+      {
+        project: makeProject({ id: "project-1" as never, name: "First" }),
+        threads: [],
+        projectMatched: false,
+      },
+    ];
+
+    expect(sortSidebarProjectResults(results, "manual").map((entry) => entry.project.id)).toEqual([
+      "project-2",
+      "project-1",
+    ]);
+  });
+
+  it("sorts projects by most recent thread activity", () => {
+    const results = [
+      {
+        project: makeProject({ id: "project-1" as never, name: "Older project" }),
+        threads: [
+          makeThread({
+            projectId: "project-1" as never,
+            messages: [
+              {
+                id: "message-1" as never,
+                role: "user",
+                text: "older",
+                createdAt: "2026-03-09T10:01:00.000Z",
+                streaming: false,
+                completedAt: "2026-03-09T10:01:00.000Z",
+              },
+            ],
+          }),
+        ],
+        projectMatched: false,
+      },
+      {
+        project: makeProject({ id: "project-2" as never, name: "Newer project" }),
+        threads: [
+          makeThread({
+            id: "thread-2" as never,
+            projectId: "project-2" as never,
+            messages: [
+              {
+                id: "message-2" as never,
+                role: "user",
+                text: "newer",
+                createdAt: "2026-03-09T10:05:00.000Z",
+                streaming: false,
+                completedAt: "2026-03-09T10:05:00.000Z",
+              },
+            ],
+          }),
+        ],
+        projectMatched: false,
+      },
+    ];
+
+    expect(
+      sortSidebarProjectResults(results, "updated_at").map((entry) => entry.project.id),
+    ).toEqual(["project-2", "project-1"]);
+  });
+
+  it("returns a project timestamp when no threads are present", () => {
+    expect(
+      getProjectSortTimestamp(
+        makeProject({
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        [],
+        "updated_at",
+      ),
+    ).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
   });
 });
 

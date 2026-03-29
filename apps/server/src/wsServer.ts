@@ -105,6 +105,7 @@ import { buildRemoteShellScript, shellQuote } from "./executionTarget/ssh.ts";
 import { ThreadNotesRepository } from "./persistence/Services/ThreadNotes.ts";
 import { RealtimeTokenService } from "./voice/Services/RealtimeTokenService.ts";
 import { SpeechSynthesisService } from "./voice/Services/SpeechSynthesisService.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -288,7 +289,8 @@ export type ServerRuntimeServices =
   | ExecutionTargetService
   | ThreadNotesRepository
   | RealtimeTokenService
-  | SpeechSynthesisService;
+  | SpeechSynthesisService
+  | ServerSettingsService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -340,6 +342,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const portForwardManager = yield* PortForwardManager;
   const keybindingsManager = yield* Keybindings;
+  const serverSettingsManager = yield* ServerSettingsService;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
@@ -540,6 +543,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
   yield* readiness.markKeybindingsReady;
+  yield* serverSettingsManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "serverSettingsRuntimeStart", cause }),
+    ),
+  );
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
@@ -944,6 +952,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
       issues: event.issues,
       providers: providerStatuses,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Stream.runForEach(serverSettingsManager.streamChanges, (settings) =>
+    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+      issues: [],
+      providers: providerStatuses,
+      settings,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -1413,6 +1429,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const settings = yield* serverSettingsManager.getSettings;
         return {
           cwd,
           keybindingsConfigPath,
@@ -1420,7 +1437,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          settings,
         };
+
+      case WS_METHODS.serverGetSettings:
+        return yield* serverSettingsManager.getSettings;
+
+      case WS_METHODS.serverUpdateSettings: {
+        const body = stripRequestTag(request.body);
+        return yield* serverSettingsManager.updateSettings(body.patch);
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
@@ -1448,11 +1474,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.voiceRealtimeSessionCreate: {
         const body = stripRequestTag(request.body);
+        logger.info("voice realtime session requested", {
+          threadId: body.threadId,
+          model: body.model ?? null,
+          voice: body.voice ?? null,
+        });
         return yield* realtimeTokenService.createClientSecret(body);
       }
 
       case WS_METHODS.voiceSpeechSynthesize: {
         const body = stripRequestTag(request.body);
+        logger.info("voice speech synthesis requested", {
+          threadId: body.threadId,
+          model: body.model ?? null,
+          voice: body.voice ?? null,
+          textLength: body.text.length,
+        });
         return yield* speechSynthesisService.synthesize(body);
       }
 

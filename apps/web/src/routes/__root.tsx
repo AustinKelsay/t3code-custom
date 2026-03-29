@@ -26,6 +26,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { subscribeToViewportChanges, syncViewportHeightCssVar } from "../lib/viewport";
 import { useAppSettings } from "../appSettings";
+import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -258,6 +259,7 @@ function EventRouter() {
         );
     });
     const unsubWelcome = onServerWelcome((payload) => {
+      migrateLocalSettingsToServer();
       void (async () => {
         await syncSnapshot();
         if (disposed) {
@@ -290,6 +292,7 @@ function EventRouter() {
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
       if (!subscribed) return;
+      if (payload.settings) return;
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
         toastManager.add({

@@ -54,6 +54,7 @@ describe("ProviderSessionStartInput", () => {
           thinking: true,
           effort: "max",
           fastMode: true,
+          contextWindow: "1m",
         },
       },
       providerOptions: {
@@ -69,6 +70,7 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.modelOptions?.claudeAgent?.thinking).toBe(true);
     expect(parsed.modelOptions?.claudeAgent?.effort).toBe("max");
     expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
+    expect(parsed.modelOptions?.claudeAgent?.contextWindow).toBe("1m");
     expect(parsed.providerOptions?.claudeAgent?.binaryPath).toBe("/usr/local/bin/claude");
     expect(parsed.providerOptions?.claudeAgent?.permissionMode).toBe("plan");
     expect(parsed.providerOptions?.claudeAgent?.maxThinkingTokens).toBe(12_000);
@@ -102,11 +104,13 @@ describe("ProviderSendTurnInput", () => {
         claudeAgent: {
           effort: "ultrathink",
           fastMode: true,
+          contextWindow: "200k",
         },
       },
     });
 
     expect(parsed.modelOptions?.claudeAgent?.effort).toBe("ultrathink");
     expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
+    expect(parsed.modelOptions?.claudeAgent?.contextWindow).toBe("200k");
   });
 });

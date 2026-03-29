@@ -85,6 +85,8 @@ export interface Project {
   model: string;
   color: string | null;
   expanded: boolean;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
   scripts: ProjectScript[];
 }
 
@@ -101,7 +103,11 @@ export interface Thread {
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
   error: string | null;
+  archivedAt?: string | null;
+  pinnedAt: string | null;
+  sortOrder: number | null;
   createdAt: string;
+  updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   branch: string | null;

@@ -29,6 +29,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode,
           branch,
           worktree_path,
+          archived_at,
+          pinned_at,
+          sort_order,
           latest_turn_id,
           created_at,
           updated_at,
@@ -44,6 +47,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
+          ${row.archivedAt},
+          ${row.pinnedAt},
+          ${row.sortOrder},
           ${row.latestTurnId},
           ${row.createdAt},
           ${row.updatedAt},
@@ -59,6 +65,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          archived_at = excluded.archived_at,
+          pinned_at = excluded.pinned_at,
+          sort_order = excluded.sort_order,
           latest_turn_id = excluded.latest_turn_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -81,6 +90,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          archived_at AS "archivedAt",
+          pinned_at AS "pinnedAt",
+          sort_order AS "sortOrder",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -105,13 +117,21 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          archived_at AS "archivedAt",
+          pinned_at AS "pinnedAt",
+          sort_order AS "sortOrder",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}
-        ORDER BY created_at ASC, thread_id ASC
+        ORDER BY
+          CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC,
+          CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END ASC,
+          sort_order DESC,
+          created_at DESC,
+          thread_id DESC
       `,
   });
 

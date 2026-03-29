@@ -27,6 +27,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     activities: [],
     proposedPlans: [],
     error: null,
+    archivedAt: null,
+    pinnedAt: null,
+    sortOrder: 1,
     createdAt: "2026-02-13T00:00:00.000Z",
     latestTurn: null,
     branch: null,
@@ -65,6 +68,9 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     interactionMode: DEFAULT_INTERACTION_MODE,
     branch: null,
     worktreePath: null,
+    archivedAt: null,
+    pinnedAt: null,
+    sortOrder: 1,
     latestTurn: null,
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
@@ -295,5 +301,19 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+
+  it("preserves project and thread updatedAt timestamps from the read model", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        updatedAt: "2026-02-27T00:05:00.000Z",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
+    expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
   });
 });

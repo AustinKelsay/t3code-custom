@@ -1,4 +1,5 @@
 export * from "./baseSchemas";
+export * from "./settings";
 export * from "./executionTarget";
 export * from "./ipc";
 export * from "./portForward";

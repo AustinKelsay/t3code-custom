@@ -10,6 +10,8 @@ import {
 
 import {
   applyClaudePromptEffortPrefix,
+  getClaudeContextWindowOptions,
+  getDefaultClaudeContextWindow,
   getEffectiveClaudeCodeEffort,
   getDefaultModel,
   getDefaultReasoningEffort,
@@ -20,6 +22,8 @@ import {
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
   normalizeModelSlug,
+  resolveClaudeApiModelId,
+  resolveClaudeContextWindow,
   resolveReasoningEffortForProvider,
   resolveSelectableModel,
   resolveModelSlug,
@@ -275,7 +279,9 @@ describe("normalizeClaudeModelOptions", () => {
         effort: "max",
         fastMode: true,
       }),
-    ).toBeUndefined();
+    ).toEqual({
+      contextWindow: "1m",
+    });
   });
 
   it("keeps the Haiku thinking toggle and removes unsupported effort", () => {
@@ -286,6 +292,16 @@ describe("normalizeClaudeModelOptions", () => {
       }),
     ).toEqual({
       thinking: false,
+    });
+  });
+
+  it("preserves supported Claude context window selections", () => {
+    expect(
+      normalizeClaudeModelOptions("claude-sonnet-4-6", {
+        contextWindow: "200k",
+      }),
+    ).toEqual({
+      contextWindow: "200k",
     });
   });
 });
@@ -333,6 +349,45 @@ describe("supportsClaudeThinkingToggle", () => {
     expect(supportsClaudeThinkingToggle("claude-haiku-4-5")).toBe(true);
     expect(supportsClaudeThinkingToggle("haiku")).toBe(true);
     expect(supportsClaudeThinkingToggle(undefined)).toBe(false);
+  });
+});
+
+describe("Claude context window helpers", () => {
+  it("returns context window options for Opus and Sonnet", () => {
+    expect(getClaudeContextWindowOptions("claude-opus-4-6")).toEqual([
+      { value: "200k", label: "200k" },
+      { value: "1m", label: "1M", isDefault: true },
+    ]);
+    expect(getClaudeContextWindowOptions("claude-sonnet-4-6")).toEqual([
+      { value: "200k", label: "200k" },
+      { value: "1m", label: "1M", isDefault: true },
+    ]);
+  });
+
+  it("returns no context window options for Haiku", () => {
+    expect(getClaudeContextWindowOptions("claude-haiku-4-5")).toEqual([]);
+    expect(getDefaultClaudeContextWindow("claude-haiku-4-5")).toBeNull();
+    expect(resolveClaudeContextWindow("claude-haiku-4-5", "1m")).toBeUndefined();
+  });
+
+  it("resolves Claude context window selections with defaults", () => {
+    expect(getDefaultClaudeContextWindow("claude-sonnet-4-6")).toBe("1m");
+    expect(resolveClaudeContextWindow("claude-sonnet-4-6", "200k")).toBe("200k");
+    expect(resolveClaudeContextWindow("claude-sonnet-4-6", "bogus")).toBe("1m");
+    expect(resolveClaudeContextWindow("claude-sonnet-4-6", undefined)).toBe("1m");
+  });
+
+  it("maps the 1m context window to the Claude API model suffix", () => {
+    expect(
+      resolveClaudeApiModelId("claude-opus-4-6", {
+        contextWindow: "1m",
+      }),
+    ).toBe("claude-opus-4-6[1m]");
+    expect(
+      resolveClaudeApiModelId("claude-opus-4-6", {
+        contextWindow: "200k",
+      }),
+    ).toBe("claude-opus-4-6");
   });
 });
 

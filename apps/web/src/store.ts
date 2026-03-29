@@ -168,6 +168,8 @@ function mapProjectsFromReadModel(
         (persistedExpandedProjectKeys.size > 0
           ? persistedExpandedProjectKeys.has(projectKey)
           : true),
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
       scripts: project.scripts.map((script) => ({ ...script })),
     } satisfies Project;
   });
@@ -313,7 +315,11 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           updatedAt: proposedPlan.updatedAt,
         })),
         error: thread.session?.lastError ?? null,
+        archivedAt: thread.archivedAt,
+        pinnedAt: thread.pinnedAt,
+        sortOrder: thread.sortOrder,
         createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
         branch: thread.branch,

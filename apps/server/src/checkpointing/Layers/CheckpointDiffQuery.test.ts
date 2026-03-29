@@ -56,6 +56,9 @@ function makeSnapshot(input: {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: input.worktreePath,
+        archivedAt: null,
+        pinnedAt: null,
+        sortOrder: 1,
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

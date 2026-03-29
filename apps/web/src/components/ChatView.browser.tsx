@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  DEFAULT_SERVER_SETTINGS,
   LOCAL_EXECUTION_TARGET_ID,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
@@ -116,6 +117,7 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    settings: DEFAULT_SERVER_SETTINGS,
   };
 }
 
@@ -241,6 +243,9 @@ function createSnapshotForTargetUser(options: {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        archivedAt: null,
+        pinnedAt: null,
+        sortOrder: 1,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -297,6 +302,9 @@ function addThreadToSnapshot(
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        archivedAt: null,
+        pinnedAt: null,
+        sortOrder: 1,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -1413,6 +1421,64 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       });
       await expect.element(page.getByText("Claude Opus 4.6")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("hydrates from the active provider's sticky model memory", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "claude-opus-4-6",
+      stickyModelByProvider: {
+        codex: "gpt-5.3-codex",
+        claudeAgent: "claude-opus-4-6",
+      },
+      stickyActiveProvider: "claudeAgent",
+      stickyModelOptions: {
+        codex: {
+          fastMode: true,
+        },
+        claudeAgent: {
+          effort: "max",
+          fastMode: true,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-provider-memory-test" as MessageId,
+        targetText: "sticky provider memory test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new sticky provider-memory draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+          claudeAgent: {
+            effort: "max",
+            fastMode: true,
+          },
+        },
+      });
     } finally {
       await mounted.cleanup();
     }

@@ -399,6 +399,30 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("maps Claude 1m context window to the API model id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        runtimeMode: "full-access",
+        modelOptions: {
+          claudeAgent: {
+            contextWindow: "1m",
+          },
+        },
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-sonnet-4-6[1m]");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("ignores unsupported max effort for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2226,7 +2250,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6[1m]"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
