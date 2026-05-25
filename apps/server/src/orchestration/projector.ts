@@ -33,6 +33,7 @@ import {
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadTurnQueuedPayload,
+  ThreadTurnSteerAcceptedPayload,
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
@@ -277,7 +278,9 @@ export function projectEvent(
             deletedAt: null,
             messages: [],
             queuedTurns: [],
+            steerEntries: [],
             activities: [],
+            proposedPlans: [],
             checkpoints: [],
             session: null,
           },
@@ -576,6 +579,45 @@ export function projectEvent(
                 type: event.type,
                 payload,
               }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-steer-accepted":
+      return decodeForEvent(
+        ThreadTurnSteerAcceptedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const steerEntry = {
+            steerEntryId: payload.steerEntryId,
+            turnId: payload.turnId,
+            messageId: payload.messageId,
+            text: payload.text,
+            createdAt: payload.createdAt,
+          };
+          const steerEntries = [
+            ...thread.steerEntries.filter(
+              (entry) => entry.steerEntryId !== steerEntry.steerEntryId,
+            ),
+            steerEntry,
+          ].toSorted(
+            (left, right) =>
+              left.createdAt.localeCompare(right.createdAt) ||
+              left.steerEntryId.localeCompare(right.steerEntryId),
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              steerEntries,
               updatedAt: event.occurredAt,
             }),
           };

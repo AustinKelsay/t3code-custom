@@ -9,6 +9,7 @@ import {
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
+  OrchestrationThread,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
@@ -26,6 +27,8 @@ import {
   ThreadQueuedTurnSendStartedPayload,
   ThreadTurnQueueCommand,
   ThreadTurnQueuedPayload,
+  ThreadTurnSteerAcceptedPayload,
+  ThreadTurnSteerCommand,
   ThreadTurnStartCommand,
   ThreadTurnStartRequestedPayload,
 } from "./orchestration.ts";
@@ -39,8 +42,12 @@ const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPay
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnQueueCommand = Schema.decodeUnknownEffect(ThreadTurnQueueCommand);
+const decodeThreadTurnSteerCommand = Schema.decodeUnknownEffect(ThreadTurnSteerCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
+);
+const decodeThreadTurnSteerAcceptedPayload = Schema.decodeUnknownEffect(
+  ThreadTurnSteerAcceptedPayload,
 );
 const decodeThreadTurnQueuedPayload = Schema.decodeUnknownEffect(ThreadTurnQueuedPayload);
 const decodeThreadQueuedTurnSendStartedPayload = Schema.decodeUnknownEffect(
@@ -81,6 +88,7 @@ function makeQueuedTurnRequest(messageId: string, overrides?: { text?: string })
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
@@ -296,6 +304,78 @@ it.effect("decodes thread.turn.queue separately from thread.turn.start", () =>
     });
     assert.strictEqual(parsed.type, "thread.turn.queue");
     assert.strictEqual(parsed.message.messageId, "msg-queue");
+  }),
+);
+
+it.effect("decodes thread.turn.steer with text-only input for the active turn", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnSteerCommand({
+      type: "thread.turn.steer",
+      commandId: "cmd-steer-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      message: {
+        messageId: "message-steer-1",
+        role: "user",
+        text: " Actually prefer the smaller refactor. ",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.steer");
+    assert.strictEqual(parsed.turnId, "turn-1");
+    assert.strictEqual(parsed.message.text, " Actually prefer the smaller refactor. ");
+  }),
+);
+
+it.effect("decodes accepted steer events and historical threads with steer entries", () =>
+  Effect.gen(function* () {
+    const accepted = yield* decodeThreadTurnSteerAcceptedPayload({
+      threadId: "thread-1",
+      steerEntryId: "steer-entry-1",
+      turnId: "turn-1",
+      messageId: "message-steer-1",
+      text: "Use the simpler plan.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(accepted.steerEntryId, "steer-entry-1");
+
+    const thread = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "New thread",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [],
+      queuedTurns: [],
+      steerEntries: [accepted],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+
+    assert.deepStrictEqual(thread.steerEntries, [
+      {
+        steerEntryId: accepted.steerEntryId,
+        turnId: accepted.turnId,
+        messageId: accepted.messageId,
+        text: accepted.text,
+        createdAt: accepted.createdAt,
+      },
+    ]);
   }),
 );
 

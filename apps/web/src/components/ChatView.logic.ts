@@ -1,14 +1,20 @@
 import {
+  type CommandId,
+  type ClientOrchestrationCommand,
   type FollowUpBehavior,
   type EnvironmentId,
   type MessageId,
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
-  type ProviderDriverKind,
+  type ProviderInteractionMode,
+  ProviderDriverKind,
+  type RuntimeMode,
   type ScopedThreadRef,
+  type ServerProvider,
   type ThreadId,
   type TurnId,
+  type UploadChatAttachment,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -28,6 +34,15 @@ export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.
 
 export type ProviderTurnSteeringSupport = "native" | "unsupported";
 export type FollowUpBehaviorOverride = FollowUpBehavior | null | undefined;
+
+export function resolveProviderTurnSteeringSupport(
+  provider: Pick<ServerProvider, "capabilities" | "driver"> | null | undefined,
+): ProviderTurnSteeringSupport {
+  if (provider?.capabilities?.turnSteering) {
+    return provider.capabilities.turnSteering;
+  }
+  return provider?.driver === ProviderDriverKind.make("codex") ? "native" : "unsupported";
+}
 
 export type EffectiveFollowUpBehavior =
   | {
@@ -68,6 +83,99 @@ export function resolveFollowUpBehavior(input: {
   return { behavior: "steer", requestedBehavior: "steer", fallbackReason: null };
 }
 
+export type ComposerTurnDispatchCommand = Extract<
+  ClientOrchestrationCommand,
+  { type: "thread.turn.start" | "thread.turn.queue" | "thread.turn.steer" }
+>;
+
+export function buildComposerTurnDispatch(input: {
+  readonly commandId: CommandId;
+  readonly threadId: ThreadId;
+  readonly activeTurnId: TurnId | null | undefined;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<UploadChatAttachment>;
+  readonly createdAt: string;
+  readonly phase: SessionPhase;
+  readonly modelSelection: ModelSelection;
+  readonly titleSeed: string;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly bootstrap?: Extract<
+    ComposerTurnDispatchCommand,
+    { type: "thread.turn.start" }
+  >["bootstrap"];
+  readonly followUpBehavior: FollowUpBehavior;
+  readonly followUpBehaviorOverride?: FollowUpBehaviorOverride;
+  readonly providerTurnSteering?: ProviderTurnSteeringSupport;
+}): { readonly delivery: "queue" | "steer"; readonly command: ComposerTurnDispatchCommand } {
+  const uploadMessage = {
+    messageId: input.messageId,
+    role: "user" as const,
+    text: input.text,
+    attachments: [...input.attachments],
+  };
+  const effectiveFollowUpBehavior = resolveFollowUpBehavior({
+    setting: input.followUpBehavior,
+    override: input.followUpBehaviorOverride,
+    activeTurnState: input.phase === "running" && input.activeTurnId ? "active" : "inactive",
+    providerTurnSteering: input.providerTurnSteering ?? "native",
+    attachmentCount: input.attachments.length,
+  });
+
+  if (input.phase === "running" && effectiveFollowUpBehavior.behavior === "queue") {
+    return {
+      delivery: "queue",
+      command: {
+        type: "thread.turn.queue",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        message: uploadMessage,
+        createdAt: input.createdAt,
+      },
+    };
+  }
+
+  if (
+    input.phase === "running" &&
+    input.activeTurnId &&
+    effectiveFollowUpBehavior.behavior === "steer"
+  ) {
+    return {
+      delivery: "steer",
+      command: {
+        type: "thread.turn.steer",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        turnId: input.activeTurnId,
+        message: {
+          messageId: input.messageId,
+          role: "user",
+          text: input.text,
+          attachments: [],
+        },
+        createdAt: input.createdAt,
+      },
+    };
+  }
+
+  return {
+    delivery: "steer",
+    command: {
+      type: "thread.turn.start",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      message: uploadMessage,
+      modelSelection: input.modelSelection,
+      titleSeed: input.titleSeed,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      ...(input.bootstrap ? { bootstrap: input.bootstrap } : {}),
+      createdAt: input.createdAt,
+    },
+  };
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
@@ -86,6 +194,7 @@ export function buildLocalDraftThread(
     session: null,
     messages: [],
     queuedTurns: [],
+    steerEntries: [],
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,
@@ -395,6 +504,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   session: Thread["session"] | null;
   messages: Thread["messages"];
   queuedTurns: Thread["queuedTurns"];
+  steerEntries?: Thread["steerEntries"];
+  activities: Thread["activities"];
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -417,6 +528,29 @@ export function hasServerAcknowledgedLocalDispatch(input: {
       input.messages.some((message) => message.id === messageId && message.role === "user") ||
       input.queuedTurns.some((queuedTurn) => queuedTurn.request.message.messageId === messageId)
     );
+  }
+
+  if (input.localDispatch.delivery === "steer" && input.localDispatch.messageId !== null) {
+    const messageId = input.localDispatch.messageId;
+    if (
+      (input.steerEntries ?? []).some((steerEntry) => steerEntry.messageId === messageId) ||
+      input.queuedTurns.some((queuedTurn) => queuedTurn.request.message.messageId === messageId) ||
+      input.activities.some((activity) => {
+        if (
+          activity.kind !== "turn.steer.failed" &&
+          activity.kind !== "turn.steer.fallback-queued"
+        ) {
+          return false;
+        }
+        const payload =
+          activity.payload && typeof activity.payload === "object"
+            ? (activity.payload as Record<string, unknown>)
+            : null;
+        return payload?.messageId === messageId;
+      })
+    ) {
+      return true;
+    }
   }
 
   const latestTurnChanged =

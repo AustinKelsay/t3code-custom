@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type ChatAttachment,
+  EventId,
   type OrchestrationEvent,
   ThreadId,
 } from "@t3tools/contracts";
@@ -935,6 +936,56 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { sequence: event.payload.activity.sequence }
               : {}),
             createdAt: event.payload.activity.createdAt,
+          });
+          return;
+
+        case "thread.turn-steer-accepted":
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: EventId.make(event.payload.steerEntryId),
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            tone: "info",
+            kind: "turn.steer.accepted",
+            summary: "Steer accepted",
+            payload: {
+              steerEntryId: event.payload.steerEntryId,
+              messageId: event.payload.messageId,
+              text: event.payload.text,
+            },
+            createdAt: event.payload.createdAt,
+          });
+          return;
+
+        case "thread.turn-steer-failed":
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: event.eventId,
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            tone: "error",
+            kind: "turn.steer.failed",
+            summary: "Steer failed",
+            payload: {
+              messageId: event.payload.messageId,
+              reason: event.payload.reason,
+            },
+            createdAt: event.payload.createdAt,
+          });
+          return;
+
+        case "thread.turn-steer-fallback-queued":
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: event.eventId,
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            tone: "info",
+            kind: "turn.steer.fallback-queued",
+            summary: "Steer queued",
+            payload: {
+              queueItemId: event.payload.queueItemId,
+              messageId: event.payload.messageId,
+              reason: event.payload.reason,
+            },
+            createdAt: event.payload.createdAt,
           });
           return;
 

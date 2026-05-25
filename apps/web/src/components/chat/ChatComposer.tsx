@@ -40,7 +40,13 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  type FollowUpBehaviorOverride,
+  readFileAsDataUrl,
+  resolveFollowUpBehavior,
+  resolveProviderTurnSteeringSupport,
+} from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -296,6 +302,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  runningFollowUpBehavior: "queue" | "steer";
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -305,6 +312,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onSendAlternateFollowUpBehavior: (behavior: "queue" | "steer") => void;
   onImplementPlanInNewThread: () => void;
 }) {
   return (
@@ -317,6 +325,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        runningFollowUpBehavior={props.runningFollowUpBehavior}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -327,6 +336,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onSendAlternateFollowUpBehavior={props.onSendAlternateFollowUpBehavior}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -455,7 +465,10 @@ export interface ChatComposerProps {
   scheduleStickToBottom: () => void;
 
   // Callbacks
-  onSend: (e?: { preventDefault: () => void }) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    options?: { followUpBehaviorOverride?: FollowUpBehaviorOverride },
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1060,8 +1073,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const collapsedComposerPrimaryActionDisabled =
     isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+  const runningFollowUpBehavior = resolveFollowUpBehavior({
+    setting: settings.followUpBehavior,
+    activeTurnState:
+      phase === "running" && activeThread?.session?.activeTurnId ? "active" : "inactive",
+    providerTurnSteering: resolveProviderTurnSteeringSupport(selectedProviderStatus),
+    attachmentCount: composerImages.length,
+  }).behavior;
   const collapsedComposerPrimaryActionLabel =
-    phase === "running" ? "Queue message" : "Send message";
+    phase === "running"
+      ? runningFollowUpBehavior === "steer"
+        ? "Steer active turn"
+        : "Queue message"
+      : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1622,13 +1646,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }) => {
-      onSend(event);
+    (
+      event?: { preventDefault: () => void },
+      options?: { followUpBehaviorOverride?: FollowUpBehaviorOverride },
+    ) => {
+      onSend(event, options);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
     [blurMobileComposerAfterSend, onSend, shouldBlurMobileComposerOnSubmit],
+  );
+  const submitAlternateFollowUpBehavior = useCallback(
+    (behavior: "queue" | "steer") => {
+      submitComposer(undefined, { followUpBehaviorOverride: behavior });
+    },
+    [submitComposer],
   );
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -1790,6 +1823,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const handleInterruptPrimaryAction = useCallback(() => {
     void onInterrupt();
   }, [onInterrupt]);
+  const handleSendAlternateFollowUpBehavior = useCallback(
+    (behavior: "queue" | "steer") => {
+      submitAlternateFollowUpBehavior(behavior);
+    },
+    [submitAlternateFollowUpBehavior],
+  );
   const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
     void onImplementPlanInNewThread();
   }, [onImplementPlanInNewThread]);
@@ -2078,6 +2117,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
+                      runningFollowUpBehavior={runningFollowUpBehavior}
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
@@ -2088,6 +2128,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
+                      onSendAlternateFollowUpBehavior={handleSendAlternateFollowUpBehavior}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     />
                   ) : null}
@@ -2287,6 +2328,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact
                     pendingAction={pendingPrimaryAction}
                     isRunning={false}
+                    runningFollowUpBehavior={runningFollowUpBehavior}
                     showPlanFollowUpPrompt={false}
                     promptHasText={false}
                     isSendBusy={isSendBusy}
@@ -2297,6 +2339,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onSendAlternateFollowUpBehavior={handleSendAlternateFollowUpBehavior}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                   />
                 </div>
@@ -2395,6 +2438,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activeContextWindow={activeContextWindow}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
+                  runningFollowUpBehavior={runningFollowUpBehavior}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy}
@@ -2405,6 +2449,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
+                  onSendAlternateFollowUpBehavior={handleSendAlternateFollowUpBehavior}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                 />
               </div>

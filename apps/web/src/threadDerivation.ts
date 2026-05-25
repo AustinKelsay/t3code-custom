@@ -1,5 +1,5 @@
 import type { MessageId, ThreadId, TurnId, TurnQueueItemId } from "@t3tools/contracts";
-import type { OrchestrationQueuedTurn } from "@t3tools/contracts";
+import type { OrchestrationQueuedTurn, OrchestrationSteerEntry } from "@t3tools/contracts";
 import type { EnvironmentState } from "./store";
 import type {
   ChatMessage,
@@ -13,11 +13,13 @@ import type {
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_QUEUED_TURNS: OrchestrationQueuedTurn[] = [];
+const EMPTY_STEER_ENTRIES: OrchestrationSteerEntry[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
 const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_QUEUED_TURN_MAP: Record<TurnQueueItemId, OrchestrationQueuedTurn> = {};
+const EMPTY_STEER_ENTRY_MAP: Record<string, OrchestrationSteerEntry> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
 const EMPTY_PROPOSED_PLAN_MAP: Record<string, ProposedPlan> = {};
 const EMPTY_TURN_DIFF_MAP: Record<TurnId, TurnDiffSummary> = {};
@@ -30,6 +32,7 @@ const threadCache = new WeakMap<
     turnState: ThreadTurnState | undefined;
     messages: Thread["messages"];
     queuedTurns: Thread["queuedTurns"];
+    steerEntries: OrchestrationSteerEntry[];
     activities: Thread["activities"];
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
@@ -91,6 +94,17 @@ function selectThreadQueuedTurns(
   );
 }
 
+function selectThreadSteerEntries(
+  state: EnvironmentState,
+  threadId: ThreadId,
+): OrchestrationSteerEntry[] {
+  return collectByIds(
+    state.steerEntryIdsByThreadId?.[threadId],
+    state.steerEntryByThreadId?.[threadId] ?? EMPTY_STEER_ENTRY_MAP,
+    EMPTY_STEER_ENTRIES,
+  );
+}
+
 function selectThreadProposedPlans(
   state: EnvironmentState,
   threadId: ThreadId,
@@ -126,6 +140,7 @@ export function getThreadFromEnvironmentState(
   const turnState = state.threadTurnStateById[threadId];
   const messages = selectThreadMessages(state, threadId);
   const queuedTurns = selectThreadQueuedTurns(state, threadId);
+  const steerEntries = selectThreadSteerEntries(state, threadId);
   const activities = selectThreadActivities(state, threadId);
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
@@ -137,6 +152,7 @@ export function getThreadFromEnvironmentState(
     cached.turnState === turnState &&
     cached.messages === messages &&
     cached.queuedTurns === queuedTurns &&
+    cached.steerEntries === steerEntries &&
     cached.activities === activities &&
     cached.proposedPlans === proposedPlans &&
     cached.turnDiffSummaries === turnDiffSummaries
@@ -151,6 +167,7 @@ export function getThreadFromEnvironmentState(
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages,
     queuedTurns,
+    steerEntries,
     activities,
     proposedPlans,
     turnDiffSummaries,
@@ -161,6 +178,7 @@ export function getThreadFromEnvironmentState(
     turnState,
     messages,
     queuedTurns,
+    steerEntries,
     activities,
     proposedPlans,
     turnDiffSummaries,

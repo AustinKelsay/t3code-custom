@@ -142,6 +142,7 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly turnSteering?: "unsupported" | "native";
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -217,6 +218,12 @@ describe("ProviderCommandReactor", () => {
         turnId: asTurnId("turn-1"),
       }),
     );
+    const steerTurn = vi.fn<ProviderServiceShape["steerTurn"]>((input) =>
+      Effect.succeed({
+        threadId: input.threadId,
+        turnId: input.expectedTurnId,
+      }),
+    );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
@@ -285,7 +292,7 @@ describe("ProviderCommandReactor", () => {
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
-      steerTurn: () => unsupported(),
+      steerTurn: steerTurn as ProviderServiceShape["steerTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
@@ -294,7 +301,7 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
-          turnSteering: "unsupported",
+          turnSteering: input?.turnSteering ?? "unsupported",
         }),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
@@ -402,6 +409,7 @@ describe("ProviderCommandReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
+      steerTurn,
       interruptTurn,
       respondToRequest,
       respondToUserInput,
@@ -534,6 +542,201 @@ describe("ProviderCommandReactor", () => {
     expect(sendingThread?.queuedTurns[0]).toMatchObject({
       queueItemId: queuedTurn?.queueItemId,
       status: "sending",
+    });
+  });
+
+  it("reacts to thread.turn.steer by steering the active provider turn and recording acceptance", async () => {
+    const harness = await createHarness({ turnSteering: "native" });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer"),
+        threadId,
+        turnId: activeTurnId,
+        message: {
+          messageId: asMessageId("message-steer-1"),
+          role: "user",
+          text: "Use the smaller refactor.",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.steerTurn.mock.calls.length === 1);
+    expect(harness.steerTurn.mock.calls[0]?.[0]).toEqual({
+      threadId,
+      expectedTurnId: activeTurnId,
+      input: "Use the smaller refactor.",
+    });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread?.steerEntries.length === 1;
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(thread?.messages).toEqual([]);
+    expect(thread?.steerEntries[0]).toMatchObject({
+      turnId: activeTurnId,
+      messageId: asMessageId("message-steer-1"),
+      text: "Use the smaller refactor.",
+      createdAt: now,
+    });
+  });
+
+  it("falls back to a queued turn when native steering is unsupported", async () => {
+    const harness = await createHarness({ turnSteering: "unsupported" });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-unsupported-steer"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer-unsupported"),
+        threadId,
+        turnId: activeTurnId,
+        message: {
+          messageId: asMessageId("message-steer-unsupported"),
+          role: "user",
+          text: "Queue this instead.",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread?.queuedTurns.length === 1;
+    });
+    expect(harness.steerTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(thread?.messages[0]).toMatchObject({
+      id: asMessageId("message-steer-unsupported"),
+      text: "Queue this instead.",
+    });
+    expect(thread?.queuedTurns[0]?.request.message.messageId).toBe(
+      asMessageId("message-steer-unsupported"),
+    );
+    expect(
+      thread?.activities.some((activity) => activity.kind === "turn.steer.fallback-queued"),
+    ).toBe(true);
+  });
+
+  it("records steer failure when the native provider request fails", async () => {
+    const harness = await createHarness({ turnSteering: "native" });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+    harness.steerTurn.mockImplementationOnce(
+      () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: ProviderDriverKind.make("codex"),
+            method: "turn/steer",
+            detail: "provider rejected steer",
+          }),
+        ) as ReturnType<ProviderServiceShape["steerTurn"]>,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-steer-fails"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer-fails"),
+        threadId,
+        turnId: activeTurnId,
+        message: {
+          messageId: asMessageId("message-steer-fails"),
+          role: "user",
+          text: "Try native steer.",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread?.activities.some((activity) => activity.kind === "turn.steer.failed") === true;
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(thread?.queuedTurns).toEqual([]);
+    expect(
+      thread?.activities.find((activity) => activity.kind === "turn.steer.failed"),
+    ).toMatchObject({
+      summary: "Steer failed",
+      payload: {
+        messageId: asMessageId("message-steer-fails"),
+        reason: "provider rejected steer",
+      },
     });
   });
 

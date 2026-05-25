@@ -3,6 +3,7 @@ import type {
   ModelSelection,
   OrchestrationLatestTurn,
   OrchestrationQueuedTurn,
+  OrchestrationSteerEntry,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
   OrchestrationSessionStatus,
@@ -106,6 +107,7 @@ export interface Thread {
   session: ThreadSession | null;
   messages: ChatMessage[];
   queuedTurns: OrchestrationQueuedTurn[];
+  steerEntries?: OrchestrationSteerEntry[];
   proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;

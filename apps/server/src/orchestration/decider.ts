@@ -493,6 +493,138 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [userMessageEvent, turnQueuedEvent];
     }
 
+    case "thread.turn.steer": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.session?.status !== "running" || thread.session.activeTurnId === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not have an active turn to steer.`,
+        });
+      }
+      if (thread.session.activeTurnId !== command.turnId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' active turn '${thread.session.activeTurnId}' does not match steer turn '${command.turnId}'.`,
+        });
+      }
+      if (command.message.attachments.length > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Steer v1 supports text input only.",
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-steer-requested",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          messageId: command.message.messageId,
+          text: command.message.text.trim(),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.steer.fail": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-steer-failed",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          messageId: command.messageId,
+          reason: command.reason,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.steer.fallback-to-queue": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queueItemId = yield* newTurnQueueItemId;
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text.trim(),
+          attachments: command.message.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnQueuedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-queued",
+        payload: {
+          threadId: command.threadId,
+          queueItemId,
+          request: {
+            message: command.message,
+          },
+          createdAt: command.createdAt,
+        },
+      };
+      const fallbackEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: turnQueuedEvent.eventId,
+        type: "thread.turn-steer-fallback-queued",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          queueItemId,
+          messageId: command.message.messageId,
+          reason: command.reason,
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, turnQueuedEvent, fallbackEvent];
+    }
+
     case "thread.queued-turn.retry": {
       const thread = yield* requireThread({
         readModel,
@@ -717,6 +849,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queueItemId: queuedTurn.queueItemId,
           messageId: queuedTurn.request.message.messageId,
           turnId: command.turnId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.steer.accept": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.latestTurn?.turnId !== command.turnId &&
+        thread.session?.activeTurnId !== command.turnId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Turn '${command.turnId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-steer-accepted",
+        payload: {
+          threadId: command.threadId,
+          steerEntryId: command.steerEntryId,
+          turnId: command.turnId,
+          messageId: command.messageId,
+          text: command.text,
           createdAt: command.createdAt,
         },
       };

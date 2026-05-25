@@ -16,6 +16,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  runningFollowUpBehavior: "queue" | "steer";
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -26,6 +27,7 @@ interface ComposerPrimaryActionsProps {
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onSendAlternateFollowUpBehavior: (behavior: "queue" | "steer") => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -47,6 +49,21 @@ export const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+export const formatRunningFollowUpActionLabel = (input: {
+  behavior: "queue" | "steer";
+  isBusy: boolean;
+}) => {
+  if (input.behavior === "steer") {
+    return input.isBusy ? "Steering..." : "Steer";
+  }
+  return input.isBusy ? "Queueing..." : "Queue";
+};
+
+export const getRunningFollowUpAlternateAction = (behavior: "queue" | "steer") =>
+  behavior === "steer"
+    ? { behavior: "queue" as const, label: "Queue instead" }
+    : { behavior: "steer" as const, label: "Steer this turn" };
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
@@ -55,6 +72,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  runningFollowUpBehavior,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -65,6 +83,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
+  onSendAlternateFollowUpBehavior,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -124,17 +143,47 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (isRunning) {
     if (hasSendableContent) {
+      const alternateAction = getRunningFollowUpAlternateAction(runningFollowUpBehavior);
       return (
         <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-          <Button
-            type="submit"
-            size="sm"
-            className={cn("rounded-full", compact ? "px-3" : "px-4")}
-            {...pointerFocusProps}
-            disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
-          >
-            {isConnecting || isSendBusy ? "Queueing..." : "Queue"}
-          </Button>
+          <div className="flex items-center">
+            <Button
+              type="submit"
+              size="sm"
+              className={cn("rounded-l-full rounded-r-none", compact ? "px-3" : "px-4")}
+              {...pointerFocusProps}
+              disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+            >
+              {formatRunningFollowUpActionLabel({
+                behavior: runningFollowUpBehavior,
+                isBusy: isConnecting || isSendBusy,
+              })}
+            </Button>
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="rounded-l-none rounded-r-full border-l-white/12 px-2"
+                    aria-label="Running follow-up actions"
+                    {...pointerFocusProps}
+                    disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                  />
+                }
+              >
+                <ChevronDownIcon className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" side="top">
+                <MenuItem
+                  disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                  onClick={() => void onSendAlternateFollowUpBehavior(alternateAction.behavior)}
+                >
+                  {alternateAction.label}
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
           <button
             type="button"
             className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
