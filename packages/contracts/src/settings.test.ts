@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ClientSettings.followUpBehavior", () => {
+  it("defaults legacy client settings to queue", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.followUpBehavior).toBe("queue");
+    expect(decodeClientSettings({}).followUpBehavior).toBe("queue");
+  });
+
+  it("accepts queue and steer in client settings patches", () => {
+    expect(decodeClientSettingsPatch({ followUpBehavior: "queue" }).followUpBehavior).toBe("queue");
+    expect(decodeClientSettingsPatch({ followUpBehavior: "steer" }).followUpBehavior).toBe("steer");
+    expect(() => decodeClientSettingsPatch({ followUpBehavior: "interrupt" })).toThrow();
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

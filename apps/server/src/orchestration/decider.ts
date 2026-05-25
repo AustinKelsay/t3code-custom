@@ -531,6 +531,44 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.queued-turn.remove": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find(
+        (entry) => entry.queueItemId === command.queueItemId,
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      if (queuedTurn.status === "sending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' is sending and cannot be removed.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-removed",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.queued-turn.send.start": {
       const thread = yield* requireThread({
         readModel,

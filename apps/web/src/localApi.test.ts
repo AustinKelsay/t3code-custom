@@ -606,6 +606,7 @@ describe("wsApi", () => {
       diffIgnoreWhitespace: true,
       diffWordWrap: true,
       favorites: [],
+      followUpBehavior: "queue" as const,
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -669,6 +670,7 @@ describe("wsApi", () => {
       diffIgnoreWhitespace: true,
       diffWordWrap: true,
       favorites: [],
+      followUpBehavior: "queue" as const,
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

@@ -1,4 +1,5 @@
 import {
+  type FollowUpBehavior,
   type EnvironmentId,
   type MessageId,
   isProviderDriverKind,
@@ -24,6 +25,48 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export type ProviderTurnSteeringSupport = "native" | "unsupported";
+export type FollowUpBehaviorOverride = FollowUpBehavior | null | undefined;
+
+export type EffectiveFollowUpBehavior =
+  | {
+      readonly behavior: "queue";
+      readonly requestedBehavior: FollowUpBehavior;
+      readonly fallbackReason:
+        | "inactive-turn"
+        | "unsupported-provider"
+        | "non-steerable-payload"
+        | null;
+    }
+  | {
+      readonly behavior: "steer";
+      readonly requestedBehavior: "steer";
+      readonly fallbackReason: null;
+    };
+
+export function resolveFollowUpBehavior(input: {
+  readonly setting: FollowUpBehavior;
+  readonly override?: FollowUpBehaviorOverride;
+  readonly activeTurnState: "active" | "inactive";
+  readonly providerTurnSteering: ProviderTurnSteeringSupport;
+  readonly attachmentCount: number;
+}): EffectiveFollowUpBehavior {
+  const requestedBehavior = input.override ?? input.setting;
+  if (requestedBehavior === "queue") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: null };
+  }
+  if (input.activeTurnState !== "active") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "inactive-turn" };
+  }
+  if (input.providerTurnSteering !== "native") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "unsupported-provider" };
+  }
+  if (input.attachmentCount > 0) {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "non-steerable-payload" };
+  }
+  return { behavior: "steer", requestedBehavior: "steer", fallbackReason: null };
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

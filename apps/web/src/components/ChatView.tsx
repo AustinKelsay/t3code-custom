@@ -1223,6 +1223,30 @@ export default function ChatView(props: ChatViewProps) {
       );
     }
   }
+  async function handleRemoveQueuedTurn(queueItemId: TurnQueueItemId) {
+    if (!activeThread || isConnecting || activeEnvironmentUnavailable) {
+      return;
+    }
+    const api = readEnvironmentApi(environmentId);
+    if (!api) {
+      return;
+    }
+    setThreadError(activeThread.id, null);
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.queued-turn.remove",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        queueItemId,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to remove queued turn.",
+      );
+    }
+  }
   const composerBannerItems: ComposerBannerStackItem[] = (() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
@@ -1319,17 +1343,27 @@ export default function ChatView(props: ChatViewProps) {
           </>
         ),
         actions: (
-          <Button
-            size="xs"
-            onClick={() => void handleRetryQueuedTurn(failedQueuedTurn.queueItemId)}
-          >
-            Retry
-          </Button>
+          <>
+            <Button
+              size="xs"
+              onClick={() => void handleRetryQueuedTurn(failedQueuedTurn.queueItemId)}
+            >
+              Retry
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => void handleRemoveQueuedTurn(failedQueuedTurn.queueItemId)}
+            >
+              Remove
+            </Button>
+          </>
         ),
       });
     }
     if (pendingQueuedTurnCount > 0 || sendingQueuedTurnCount > 0) {
       const queuedTurnCount = pendingQueuedTurnCount + sendingQueuedTurnCount;
+      const pendingQueueHead = queuedTurns.find((queuedTurn) => queuedTurn.status === "pending");
       items.push({
         id: `queued-turns:${activeThread?.id ?? "none"}`,
         variant: "info",
@@ -1341,6 +1375,15 @@ export default function ChatView(props: ChatViewProps) {
             : sendingQueuedTurnCount > 0
               ? "The next queued turn is being sent now."
               : "Queued turns will send automatically when the thread becomes ready.",
+        actions: pendingQueueHead ? (
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => void handleRemoveQueuedTurn(pendingQueueHead.queueItemId)}
+          >
+            Remove next
+          </Button>
+        ) : undefined,
       });
     }
     return items;

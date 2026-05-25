@@ -17,6 +17,7 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSteerTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   type ProviderInstanceId,
@@ -732,6 +733,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const steerTurn: ProviderServiceShape["steerTurn"] = Effect.fn("steerTurn")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.steerTurn",
+      schema: ProviderSteerTurnInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.steerTurn",
+        allowRecovery: false,
+      });
+      metricProvider = routed.adapter.provider;
+      if (routed.adapter.capabilities.turnSteering !== "native") {
+        return yield* toValidationError(
+          "ProviderService.steerTurn",
+          `Provider '${routed.adapter.provider}' does not support native turn steering.`,
+        );
+      }
+      if (!routed.isActive) {
+        return yield* toValidationError(
+          "ProviderService.steerTurn",
+          `Cannot steer thread '${input.threadId}' because no active provider session exists.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "steer-turn",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.expected_turn_id": input.expectedTurnId,
+      });
+      const result = yield* routed.adapter.steerTurn(input);
+      yield* analytics.record("provider.turn.steered", {
+        provider: routed.adapter.provider,
+      });
+      return result;
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "steer",
+          }),
+      }),
+    );
+  });
+
   const respondToRequest: ProviderServiceShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -1035,6 +1084,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

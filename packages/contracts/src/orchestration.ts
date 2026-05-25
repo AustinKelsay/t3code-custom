@@ -700,6 +700,14 @@ const ThreadQueuedTurnRetryCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadQueuedTurnRemoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-turn.remove"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  queueItemId: TurnQueueItemId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadCheckpointRevertCommand = Schema.Struct({
   type: Schema.Literal("thread.checkpoint.revert"),
   commandId: CommandId,
@@ -730,6 +738,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadTurnQueueCommand,
   ThreadTurnInterruptCommand,
   ThreadQueuedTurnRetryCommand,
+  ThreadQueuedTurnRemoveCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -753,6 +762,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ClientThreadTurnQueueCommand,
   ThreadTurnInterruptCommand,
   ThreadQueuedTurnRetryCommand,
+  ThreadQueuedTurnRemoveCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -888,6 +898,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.queued-turn-send-started",
   "thread.queued-turn-resolved",
   "thread.queued-turn-requeued",
+  "thread.queued-turn-removed",
   "thread.queued-turn-send-failed",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -1036,6 +1047,13 @@ export const ThreadQueuedTurnResolvedPayload = Schema.Struct({
 });
 
 export const ThreadQueuedTurnRequeuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  queueItemId: TurnQueueItemId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadQueuedTurnRemovedPayload = Schema.Struct({
   threadId: ThreadId,
   queueItemId: TurnQueueItemId,
   messageId: MessageId,
@@ -1213,6 +1231,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.queued-turn-requeued"),
     payload: ThreadQueuedTurnRequeuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-turn-removed"),
+    payload: ThreadQueuedTurnRemovedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

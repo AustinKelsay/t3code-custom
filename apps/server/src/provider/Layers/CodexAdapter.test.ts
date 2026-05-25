@@ -42,6 +42,7 @@ import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.t
 import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
+  type CodexSessionRuntimeSteerTurnInput,
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
@@ -80,6 +81,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       Promise.resolve({
         threadId: this.options.threadId,
         turnId: asTurnId("turn-1"),
+      }),
+  );
+
+  public readonly steerTurnImpl = vi.fn(
+    (input: CodexSessionRuntimeSteerTurnInput): Promise<{ threadId: ThreadId; turnId: TurnId }> =>
+      Promise.resolve({
+        threadId: this.options.threadId,
+        turnId: input.expectedTurnId,
       }),
   );
 
@@ -129,6 +138,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   sendTurn(input: CodexSessionRuntimeSendTurnInput) {
     return Effect.promise(() => this.sendTurnImpl(input));
+  }
+
+  steerTurn(input: CodexSessionRuntimeSteerTurnInput) {
+    return Effect.promise(() => this.steerTurnImpl(input));
   }
 
   interruptTurn(turnId?: TurnId) {
@@ -355,6 +368,35 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "fast",
+      });
+    }),
+  );
+
+  it.effect("maps steerTurn to Codex runtime steering with the expected turn id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-steer"),
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+      runtime.steerTurnImpl.mockClear();
+
+      const result = yield* adapter.steerTurn({
+        threadId: asThreadId("sess-steer"),
+        expectedTurnId: asTurnId("turn-active"),
+        input: "please keep going",
+      });
+
+      assert.deepStrictEqual(result, {
+        threadId: asThreadId("sess-steer"),
+        turnId: asTurnId("turn-active"),
+      });
+      assert.deepStrictEqual(runtime.steerTurnImpl.mock.calls[0]?.[0], {
+        expectedTurnId: asTurnId("turn-active"),
+        input: "please keep going",
       });
     }),
   );

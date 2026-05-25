@@ -20,6 +20,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  resolveFollowUpBehavior,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
@@ -73,6 +74,82 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("resolveFollowUpBehavior", () => {
+  it("defaults queue requests to queue", () => {
+    expect(
+      resolveFollowUpBehavior({
+        setting: "queue",
+        activeTurnState: "active",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toEqual({
+      behavior: "queue",
+      requestedBehavior: "queue",
+      fallbackReason: null,
+    });
+  });
+
+  it("uses steer when requested during an active steerable Codex turn", () => {
+    expect(
+      resolveFollowUpBehavior({
+        setting: "steer",
+        activeTurnState: "active",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toEqual({
+      behavior: "steer",
+      requestedBehavior: "steer",
+      fallbackReason: null,
+    });
+  });
+
+  it("lets a one-shot queue override win over a steer setting", () => {
+    expect(
+      resolveFollowUpBehavior({
+        setting: "steer",
+        override: "queue",
+        activeTurnState: "active",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toEqual({
+      behavior: "queue",
+      requestedBehavior: "queue",
+      fallbackReason: null,
+    });
+  });
+
+  it("falls back to queue when steer is unsupported or payload has attachments", () => {
+    expect(
+      resolveFollowUpBehavior({
+        setting: "steer",
+        activeTurnState: "active",
+        providerTurnSteering: "unsupported",
+        attachmentCount: 0,
+      }),
+    ).toMatchObject({
+      behavior: "queue",
+      requestedBehavior: "steer",
+      fallbackReason: "unsupported-provider",
+    });
+
+    expect(
+      resolveFollowUpBehavior({
+        setting: "steer",
+        activeTurnState: "active",
+        providerTurnSteering: "native",
+        attachmentCount: 1,
+      }),
+    ).toMatchObject({
+      behavior: "queue",
+      requestedBehavior: "steer",
+      fallbackReason: "non-steerable-payload",
+    });
   });
 });
 

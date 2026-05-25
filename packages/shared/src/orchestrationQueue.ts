@@ -29,6 +29,10 @@ export type QueuedTurnLifecycleEvent =
       readonly payload: QueuedTurnPayload<"thread.queued-turn-requeued">;
     }
   | {
+      readonly type: "thread.queued-turn-removed";
+      readonly payload: QueuedTurnPayload<"thread.queued-turn-removed">;
+    }
+  | {
       readonly type: "thread.queued-turn-resolved";
       readonly payload: QueuedTurnPayload<"thread.queued-turn-resolved">;
     };
@@ -112,6 +116,7 @@ export function getQueuedTurnLifecycleOperation(
       };
 
     case "thread.queued-turn-resolved":
+    case "thread.queued-turn-removed":
       return {
         kind: "delete",
         threadId: event.payload.threadId,

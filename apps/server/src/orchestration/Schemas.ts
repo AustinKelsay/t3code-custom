@@ -18,6 +18,7 @@ import {
   ThreadTurnStartRequestedPayload as ContractsThreadTurnStartRequestedPayloadSchema,
   ThreadTurnQueuedPayload as ContractsThreadTurnQueuedPayloadSchema,
   ThreadQueuedTurnSendFailedPayload as ContractsThreadQueuedTurnSendFailedPayloadSchema,
+  ThreadQueuedTurnRemovedPayload as ContractsThreadQueuedTurnRemovedPayloadSchema,
   ThreadQueuedTurnRequeuedPayload as ContractsThreadQueuedTurnRequeuedPayloadSchema,
   ThreadQueuedTurnResolvedPayload as ContractsThreadQueuedTurnResolvedPayloadSchema,
   ThreadQueuedTurnSendStartedPayload as ContractsThreadQueuedTurnSendStartedPayloadSchema,
@@ -52,6 +53,7 @@ export const ThreadTurnQueuedPayload = ContractsThreadTurnQueuedPayloadSchema;
 export const ThreadQueuedTurnSendStartedPayload = ContractsThreadQueuedTurnSendStartedPayloadSchema;
 export const ThreadQueuedTurnResolvedPayload = ContractsThreadQueuedTurnResolvedPayloadSchema;
 export const ThreadQueuedTurnRequeuedPayload = ContractsThreadQueuedTurnRequeuedPayloadSchema;
+export const ThreadQueuedTurnRemovedPayload = ContractsThreadQueuedTurnRemovedPayloadSchema;
 export const ThreadQueuedTurnSendFailedPayload = ContractsThreadQueuedTurnSendFailedPayloadSchema;
 export const ThreadTurnInterruptRequestedPayload =
   ContractsThreadTurnInterruptRequestedPayloadSchema;

@@ -26,6 +26,7 @@ import {
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadQueuedTurnSendFailedPayload,
+  ThreadQueuedTurnRemovedPayload,
   ThreadQueuedTurnRequeuedPayload,
   ThreadQueuedTurnResolvedPayload,
   ThreadQueuedTurnSendStartedPayload,
@@ -509,6 +510,31 @@ export function projectEvent(
     case "thread.queued-turn-requeued":
       return decodeForEvent(
         ThreadQueuedTurnRequeuedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, {
+                type: event.type,
+                payload,
+              }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-turn-removed":
+      return decodeForEvent(
+        ThreadQueuedTurnRemovedPayload,
         event.payload,
         event.type,
         "payload",

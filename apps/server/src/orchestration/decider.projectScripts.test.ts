@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type OrchestrationEvent,
   ProjectId,
   ThreadId,
   TurnQueueItemId,
@@ -589,9 +590,9 @@ describe("decider project scripts", () => {
       }),
     );
 
-    expect(Array.isArray(result)).toBe(false);
-    if (Array.isArray(result)) {
-      return;
+    expect("type" in result).toBe(true);
+    if (!("type" in result)) {
+      throw new Error("Expected a single queued turn removal event.");
     }
     expect(result).toMatchObject({
       type: "thread.queued-turn-requeued",
@@ -600,6 +601,133 @@ describe("decider project scripts", () => {
         queueItemId,
       },
     });
+  });
+
+  it("removes pending queued turns from projected thread state", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const queueItemId = TurnQueueItemId.make("queue-item-1");
+    const baseReadModel = await seedThreadReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(baseReadModel, {
+        sequence: 3,
+        eventId: asEventId("evt-turn-queued-for-remove"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-queued-for-remove"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-queued-for-remove"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          request: makeQueuedTurnRequest(asMessageId("message-user-queued-remove"), "remove me"),
+          createdAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.remove",
+          commandId: CommandId.make("cmd-queued-turn-remove"),
+          threadId,
+          queueItemId,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    expect("type" in result).toBe(true);
+    if (!("type" in result)) {
+      throw new Error("Expected a single queued turn removal event.");
+    }
+    expect(result).toMatchObject({
+      type: "thread.queued-turn-removed",
+      payload: {
+        threadId,
+        queueItemId,
+        messageId: asMessageId("message-user-queued-remove"),
+      },
+    });
+    if (result.type !== "thread.queued-turn-removed") {
+      throw new Error(`Expected queued turn removed event, received ${result.type}.`);
+    }
+    const removedEvent = result as Omit<
+      Extract<OrchestrationEvent, { readonly type: "thread.queued-turn-removed" }>,
+      "sequence"
+    >;
+
+    const projected = await Effect.runPromise(
+      projectEvent(readModel, { ...removedEvent, sequence: readModel.snapshotSequence + 1 }),
+    );
+    expect(projected.threads.find((thread) => thread.id === threadId)?.queuedTurns).toEqual([]);
+  });
+
+  it("rejects removing queued turns that are sending", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const queueItemId = TurnQueueItemId.make("queue-item-1");
+    const baseReadModel = await seedThreadReadModel(now);
+    const withQueuedTurn = await Effect.runPromise(
+      projectEvent(baseReadModel, {
+        sequence: 3,
+        eventId: asEventId("evt-turn-queued-sending-remove"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-queued-sending-remove"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-queued-sending-remove"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          request: makeQueuedTurnRequest(asMessageId("message-user-sending-remove"), "sending"),
+          createdAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withQueuedTurn, {
+        sequence: 4,
+        eventId: asEventId("evt-turn-sending-remove"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.queued-turn-send-started",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-sending-remove"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-sending-remove"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          messageId: asMessageId("message-user-sending-remove"),
+          createdAt: now,
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.remove",
+            commandId: CommandId.make("cmd-remove-sending"),
+            threadId,
+            queueItemId,
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("is sending and cannot be removed");
   });
 
   it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {

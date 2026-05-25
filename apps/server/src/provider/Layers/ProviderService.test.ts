@@ -7,6 +7,8 @@ import type {
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
+  ProviderSteerTurnInput,
+  ProviderSteerTurnResult,
   ProviderSession,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -135,6 +137,25 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     },
   );
 
+  const steerTurn = vi.fn(
+    (
+      input: ProviderSteerTurnInput,
+    ): Effect.Effect<ProviderSteerTurnResult, ProviderAdapterError> => {
+      if (!sessions.has(input.threadId)) {
+        return Effect.fail(
+          new ProviderAdapterSessionNotFoundError({
+            provider,
+            threadId: input.threadId,
+          }),
+        );
+      }
+      return Effect.succeed({
+        threadId: input.threadId,
+        turnId: input.expectedTurnId,
+      });
+    },
+  );
+
   const interruptTurn = vi.fn(
     (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.void,
@@ -207,9 +228,11 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteering: provider === ProviderDriverKind.make("codex") ? "native" : "unsupported",
     },
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,
@@ -245,6 +268,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     updateSession,
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,
@@ -783,6 +807,62 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("routes native Codex steer and rejects unsupported provider steer", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const codexSession = yield* provider.startSession(asThreadId("thread-steer-codex"), {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-steer-codex"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const steered = yield* provider.steerTurn({
+        threadId: codexSession.threadId,
+        expectedTurnId: asTurnId("turn-active"),
+        input: "keep going",
+      });
+
+      assert.deepEqual(steered, {
+        threadId: codexSession.threadId,
+        turnId: asTurnId("turn-active"),
+      });
+      assert.equal(routing.codex.steerTurn.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.steerTurn.mock.calls[0]?.[0], {
+        threadId: codexSession.threadId,
+        expectedTurnId: asTurnId("turn-active"),
+        input: "keep going",
+      });
+
+      const claudeSession = yield* provider.startSession(asThreadId("thread-steer-claude"), {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-steer-claude"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const failure = yield* Effect.flip(
+        provider.steerTurn({
+          threadId: claudeSession.threadId,
+          expectedTurnId: asTurnId("turn-active"),
+          input: "keep going",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "does not support native turn steering");
+      assert.equal(routing.claude.steerTurn.mock.calls.length, 0);
+
+      yield* provider.stopSession({ threadId: codexSession.threadId });
+      yield* provider.stopSession({ threadId: claudeSession.threadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.steerTurn.mockClear();
+      routing.claude.startSession.mockClear();
+      routing.claude.steerTurn.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
