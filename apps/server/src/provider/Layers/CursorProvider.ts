@@ -42,6 +42,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
+import { discoverCursorSkills } from "../localSkillDiscovery.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
@@ -745,6 +746,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    skills: discoverCursorSkills(),
     probe: {
       installed: true,
       version: input.parsed.version,
