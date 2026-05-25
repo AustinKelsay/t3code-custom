@@ -1,5 +1,9 @@
 # T3 Code
 
+> Local fork note: this fork exists only to temporarily expose Cursor and
+> OpenCode local skills through the existing `$` skill picker. See
+> [FORK.md](./FORK.md).
+
 T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and OpenCode, more coming soon).
 
 ## Installation
