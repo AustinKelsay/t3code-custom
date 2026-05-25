@@ -18,6 +18,8 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
+const emitPromptUsage = process.env.T3_ACP_PROMPT_USAGE === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -512,7 +514,30 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      if (emitUsageUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            size: 200_000,
+            used: 31_250,
+          },
+        });
+      }
+
+      return {
+        stopReason: "end_turn",
+        ...(emitPromptUsage
+          ? {
+              usage: {
+                inputTokens: 100,
+                outputTokens: 23,
+                thoughtTokens: 7,
+                totalTokens: 130,
+              },
+            }
+          : {}),
+      };
     }),
   );
 

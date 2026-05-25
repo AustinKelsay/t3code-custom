@@ -13,6 +13,7 @@ import {
   type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -56,6 +57,7 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
+  makeAcpUsageUpdatedEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
   type AcpSessionMode,
@@ -129,9 +131,29 @@ interface CursorSessionContext {
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  readonly turnsWithUsageUpdates: Set<string>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
   stopped: boolean;
+}
+
+function normalizeAcpPromptUsage(
+  usage: EffectAcpSchema.PromptResponse["usage"],
+): ThreadTokenUsageSnapshot | undefined {
+  if (!usage || usage.totalTokens <= 0) {
+    return undefined;
+  }
+  return {
+    usedTokens: usage.totalTokens,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.cachedReadTokens !== undefined && usage.cachedReadTokens !== null
+      ? { cachedInputTokens: usage.cachedReadTokens }
+      : {}),
+    ...(usage.thoughtTokens !== undefined && usage.thoughtTokens !== null
+      ? { reasoningOutputTokens: usage.thoughtTokens }
+      : {}),
+  };
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -720,6 +742,7 @@ export function makeCursorAdapter(
             pendingApprovals,
             pendingUserInputs,
             turns: [],
+            turnsWithUsageUpdates: new Set(),
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             stopped: false,
@@ -803,6 +826,21 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "UsageUpdated":
+                    if (ctx.activeTurnId) {
+                      ctx.turnsWithUsageUpdates.add(ctx.activeTurnId);
+                    }
+                    yield* offerRuntimeEvent(
+                      makeAcpUsageUpdatedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        usage: event.usage,
                         rawPayload: event.rawPayload,
                       }),
                     );
@@ -936,6 +974,25 @@ export function makeCursorAdapter(
           );
 
         ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+        const fallbackUsage = normalizeAcpPromptUsage(result.usage);
+        if (fallbackUsage && !ctx.turnsWithUsageUpdates.has(turnId)) {
+          ctx.turnsWithUsageUpdates.add(turnId);
+          yield* offerRuntimeEvent({
+            type: "thread.token-usage.updated",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId,
+            payload: {
+              usage: fallbackUsage,
+            },
+            raw: {
+              source: "acp.jsonrpc",
+              method: "session/prompt",
+              payload: result,
+            },
+          });
+        }
         ctx.session = {
           ...ctx.session,
           activeTurnId: turnId,

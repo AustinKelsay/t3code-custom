@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  type ThreadTokenUsageSnapshot,
   ThreadId,
   type ToolLifecycleItemType,
   TurnId,
@@ -21,7 +22,14 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+  StepFinishPart,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -46,6 +54,7 @@ import {
   toOpenCodeFileParts,
   toOpenCodePermissionReply,
   toOpenCodeQuestionAnswers,
+  type OpenCodeInventory,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
@@ -72,9 +81,14 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
-  readonly messageRoleById: Map<string, "user" | "assistant">;
+  readonly messageInfoById: Map<
+    string,
+    Pick<AssistantMessage, "providerID" | "modelID" | "role"> | { readonly role: "user" }
+  >;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
+  readonly emittedUsageSignatureByMessageId: Map<string, string>;
+  readonly modelContextLimitBySlug: Map<string, number>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
@@ -199,6 +213,106 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
     return "collab_agent_tool_call";
   }
   return "dynamic_tool_call";
+}
+
+function buildOpenCodeModelContextLimitMap(inventory: OpenCodeInventory): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const provider of inventory.providerList.all) {
+    for (const model of Object.values(provider.models)) {
+      const contextLimit = model.limit?.context;
+      if (typeof contextLimit === "number" && Number.isFinite(contextLimit) && contextLimit > 0) {
+        out.set(`${provider.id}/${model.id}`, Math.floor(contextLimit));
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeOpenCodeAssistantUsage(
+  message: Partial<Pick<AssistantMessage, "id" | "role" | "providerID" | "modelID" | "tokens">>,
+  modelContextLimitBySlug: ReadonlyMap<string, number>,
+): { readonly usage: ThreadTokenUsageSnapshot; readonly signature: string } | undefined {
+  if (
+    message.role !== "assistant" ||
+    typeof message.providerID !== "string" ||
+    typeof message.modelID !== "string" ||
+    !message.tokens
+  ) {
+    return undefined;
+  }
+
+  const inputTokens = message.tokens.input;
+  const outputTokens = message.tokens.output;
+  const reasoningOutputTokens = message.tokens.reasoning;
+  const cachedInputTokens = message.tokens.cache.read + message.tokens.cache.write;
+  const usedTokens =
+    message.tokens.total ??
+    inputTokens +
+      outputTokens +
+      reasoningOutputTokens +
+      message.tokens.cache.read +
+      message.tokens.cache.write;
+
+  if (!Number.isFinite(usedTokens) || usedTokens <= 0) {
+    return undefined;
+  }
+
+  const modelSlug = `${message.providerID}/${message.modelID}`;
+  const maxTokens = modelContextLimitBySlug.get(modelSlug);
+  const usage: ThreadTokenUsageSnapshot = {
+    usedTokens: Math.floor(usedTokens),
+    inputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    cachedInputTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+  return {
+    usage,
+    signature: `${usage.usedTokens}:${usage.maxTokens ?? "unknown"}`,
+  };
+}
+
+function normalizeOpenCodeStepFinishUsage(
+  part: StepFinishPart,
+  message:
+    | Pick<AssistantMessage, "providerID" | "modelID" | "role">
+    | { readonly role: "user" }
+    | undefined,
+  modelContextLimitBySlug: ReadonlyMap<string, number>,
+): { readonly usage: ThreadTokenUsageSnapshot; readonly signature: string } | undefined {
+  const inputTokens = part.tokens.input;
+  const outputTokens = part.tokens.output;
+  const reasoningOutputTokens = part.tokens.reasoning;
+  const cachedInputTokens = part.tokens.cache.read + part.tokens.cache.write;
+  const usedTokens =
+    part.tokens.total ??
+    inputTokens +
+      outputTokens +
+      reasoningOutputTokens +
+      part.tokens.cache.read +
+      part.tokens.cache.write;
+
+  if (!Number.isFinite(usedTokens) || usedTokens <= 0) {
+    return undefined;
+  }
+
+  const maxTokens =
+    message?.role === "assistant"
+      ? modelContextLimitBySlug.get(`${message.providerID}/${message.modelID}`)
+      : undefined;
+  const usage: ThreadTokenUsageSnapshot = {
+    usedTokens: Math.floor(usedTokens),
+    inputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    cachedInputTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+  return {
+    usage,
+    signature: `${usage.usedTokens}:${usage.maxTokens ?? "unknown"}`,
+  };
 }
 
 function mapPermissionToRequestType(
@@ -357,7 +471,7 @@ function messageRoleForPart(
   context: OpenCodeSessionContext,
   part: Pick<Part, "messageID" | "type">,
 ): "assistant" | "user" | undefined {
-  const known = context.messageRoleById.get(part.messageID);
+  const known = context.messageInfoById.get(part.messageID)?.role;
   if (known) {
     return known;
   }
@@ -657,8 +771,43 @@ export function makeOpenCodeAdapter(
 
       switch (event.type) {
         case "message.updated": {
-          context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
+          context.messageInfoById.set(
+            event.properties.info.id,
+            event.properties.info.role === "assistant"
+              ? {
+                  role: "assistant",
+                  providerID: event.properties.info.providerID,
+                  modelID: event.properties.info.modelID,
+                }
+              : { role: "user" },
+          );
           if (event.properties.info.role === "assistant") {
+            const normalizedUsage = normalizeOpenCodeAssistantUsage(
+              event.properties.info,
+              context.modelContextLimitBySlug,
+            );
+            if (normalizedUsage) {
+              const previousSignature = context.emittedUsageSignatureByMessageId.get(
+                event.properties.info.id,
+              );
+              if (previousSignature !== normalizedUsage.signature) {
+                context.emittedUsageSignatureByMessageId.set(
+                  event.properties.info.id,
+                  normalizedUsage.signature,
+                );
+                yield* emit({
+                  ...(yield* buildEventBase({
+                    threadId: context.session.threadId,
+                    turnId,
+                    raw: event,
+                  })),
+                  type: "thread.token-usage.updated",
+                  payload: {
+                    usage: normalizedUsage.usage,
+                  },
+                });
+              }
+            }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
                 continue;
@@ -670,7 +819,7 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.removed": {
-          context.messageRoleById.delete(event.properties.messageID);
+          context.messageInfoById.delete(event.properties.messageID);
           break;
         }
 
@@ -765,6 +914,31 @@ export function makeOpenCodeAdapter(
             };
             appendTurnItem(context, turnId, part);
             yield* emit(runtimeEvent);
+          }
+          if (part.type === "step-finish") {
+            const normalizedUsage = normalizeOpenCodeStepFinishUsage(
+              part,
+              context.messageInfoById.get(part.messageID),
+              context.modelContextLimitBySlug,
+            );
+            if (normalizedUsage) {
+              const usageKey = `step-finish:${part.messageID}:${part.id}`;
+              const previousSignature = context.emittedUsageSignatureByMessageId.get(usageKey);
+              if (previousSignature !== normalizedUsage.signature) {
+                context.emittedUsageSignatureByMessageId.set(usageKey, normalizedUsage.signature);
+                yield* emit({
+                  ...(yield* buildEventBase({
+                    threadId: context.session.threadId,
+                    turnId,
+                    raw: event,
+                  })),
+                  type: "thread.token-usage.updated",
+                  payload: {
+                    usage: normalizedUsage.usage,
+                  },
+                });
+              }
+            }
           }
           break;
         }
@@ -1044,6 +1218,15 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
+              const inventoryExit = yield* Effect.exit(
+                openCodeRuntime.loadOpenCodeInventory(client),
+              );
+              if (Exit.isFailure(inventoryExit)) {
+                yield* Effect.logDebug("OpenCode inventory load failed for context limits", {
+                  threadId: input.threadId,
+                  cause: Cause.pretty(inventoryExit.cause),
+                });
+              }
               const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
                 client.session.create({
                   title: `T3 Code ${input.threadId}`,
@@ -1061,6 +1244,9 @@ export function makeOpenCodeAdapter(
                 server,
                 client,
                 openCodeSession: openCodeSession.data,
+                modelContextLimitBySlug: Exit.isSuccess(inventoryExit)
+                  ? buildOpenCodeModelContextLimitMap(inventoryExit.value)
+                  : new Map<string, number>(),
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1109,7 +1295,9 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           partById: new Map(),
           emittedTextByPartId: new Map(),
-          messageRoleById: new Map(),
+          emittedUsageSignatureByMessageId: new Map(),
+          modelContextLimitBySlug: started.modelContextLimitBySlug,
+          messageInfoById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,

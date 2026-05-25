@@ -27,6 +27,7 @@ import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  type OpenCodeInventory,
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import {
@@ -63,6 +64,8 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    inventory: null as unknown,
+    inventoryError: null as Error | null,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -76,6 +79,8 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.inventory = null;
+    this.state.inventoryError = null;
   },
 };
 
@@ -169,13 +174,20 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
-    Effect.fail(
-      new OpenCodeRuntimeError({
-        operation: "loadOpenCodeInventory",
-        detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
-        cause: null,
-      }),
-    ),
+    runtimeMock.state.inventoryError
+      ? Effect.fail(
+          new OpenCodeRuntimeError({
+            operation: "loadOpenCodeInventory",
+            detail: runtimeMock.state.inventoryError.message,
+            cause: runtimeMock.state.inventoryError,
+          }),
+        )
+      : Effect.succeed(
+          (runtimeMock.state.inventory ?? {
+            providerList: { connected: [], all: [] },
+            agents: [],
+          }) as OpenCodeInventory,
+        ),
 };
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
@@ -226,6 +238,87 @@ beforeEach(() => {
 
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+
+const makeInventory = (contextLimit: number): OpenCodeInventory =>
+  ({
+    providerList: {
+      connected: ["anthropic"],
+      default: {
+        providerID: "anthropic",
+        modelID: "claude-sonnet-4-5",
+      },
+      all: [
+        {
+          id: "anthropic",
+          name: "Anthropic",
+          models: {
+            "claude-sonnet-4-5": {
+              id: "claude-sonnet-4-5",
+              name: "Claude Sonnet 4.5",
+              limit: {
+                context: contextLimit,
+                output: 8192,
+              },
+            },
+          },
+        },
+      ],
+    },
+    agents: [],
+  }) as unknown as OpenCodeInventory;
+
+const assistantMessageUpdated = (input?: {
+  readonly id?: string;
+  readonly total?: number;
+  readonly modelID?: string;
+}) => ({
+  type: "message.updated",
+  properties: {
+    sessionID: "http://127.0.0.1:9999/session",
+    info: {
+      id: input?.id ?? "msg-usage",
+      sessionID: "http://127.0.0.1:9999/session",
+      role: "assistant",
+      parentID: "msg-user",
+      modelID: input?.modelID ?? "claude-sonnet-4-5",
+      providerID: "anthropic",
+      mode: "build",
+      agent: "build",
+      path: { cwd: process.cwd(), root: process.cwd() },
+      cost: 0.01,
+      tokens: {
+        total: input?.total ?? 321,
+        input: 300,
+        output: 20,
+        reasoning: 1,
+        cache: { read: 0, write: 0 },
+      },
+      time: { created: Date.now() },
+    },
+  },
+});
+
+const stepFinishPartUpdated = (input?: { readonly total?: number }) => ({
+  type: "message.part.updated",
+  properties: {
+    sessionID: "http://127.0.0.1:9999/session",
+    part: {
+      id: "part-step-finish",
+      sessionID: "http://127.0.0.1:9999/session",
+      messageID: "msg-step-finish",
+      type: "step-finish",
+      reason: "end_turn",
+      cost: 0.01,
+      tokens: {
+        total: input?.total ?? 45_000,
+        input: 44_000,
+        output: 900,
+        reasoning: 100,
+        cache: { read: 0, write: 0 },
+      },
+    },
+  },
+});
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
@@ -650,6 +743,144 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const completed = events.at(-1);
       if (completed?.type === "item.completed") {
         assert.equal(completed.payload.detail, "A BBonus");
+      }
+    }),
+  );
+
+  it.effect("emits context-window usage with model limits from assistant messages", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage");
+      runtimeMock.state.inventory = makeInventory(200_000);
+      runtimeMock.state.subscribedEvents = [assistantMessageUpdated({ total: 31_250 })];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvent = events.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepEqual(usageEvent.payload.usage, {
+          usedTokens: 31_250,
+          inputTokens: 300,
+          outputTokens: 20,
+          reasoningOutputTokens: 1,
+          cachedInputTokens: 0,
+          maxTokens: 200_000,
+        });
+      }
+    }),
+  );
+
+  it.effect("deduplicates repeated OpenCode assistant usage snapshots", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-dedupe");
+      runtimeMock.state.inventory = makeInventory(200_000);
+      runtimeMock.state.subscribedEvents = [
+        assistantMessageUpdated({ id: "msg-usage-dedupe", total: 31_250 }),
+        assistantMessageUpdated({ id: "msg-usage-dedupe", total: 31_250 }),
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      assert.equal(events.filter((event) => event.type === "thread.token-usage.updated").length, 1);
+    }),
+  );
+
+  it.effect("emits OpenCode usage from step-finish parts", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-step-finish-usage");
+      runtimeMock.state.inventory = makeInventory(200_000);
+      runtimeMock.state.subscribedEvents = [
+        assistantMessageUpdated({ id: "msg-step-finish", total: 0 }),
+        stepFinishPartUpdated({ total: 45_000 }),
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      let usageEvent: (typeof events)[number] | undefined;
+      for (const event of events) {
+        if (event.type === "thread.token-usage.updated") {
+          usageEvent = event;
+        }
+      }
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepEqual(usageEvent.payload.usage, {
+          usedTokens: 45_000,
+          inputTokens: 44_000,
+          outputTokens: 900,
+          reasoningOutputTokens: 100,
+          cachedInputTokens: 0,
+          maxTokens: 200_000,
+        });
+      }
+    }),
+  );
+
+  it.effect("emits token-only OpenCode usage when inventory limits are unavailable", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-no-inventory");
+      runtimeMock.state.inventoryError = new Error("inventory unavailable");
+      runtimeMock.state.subscribedEvents = [assistantMessageUpdated({ total: 31_250 })];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvent = events.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.equal(usageEvent.payload.usage.usedTokens, 31_250);
+        assert.equal(usageEvent.payload.usage.maxTokens, undefined);
       }
     }),
   );

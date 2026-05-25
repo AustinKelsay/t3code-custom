@@ -182,6 +182,35 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects ACP usage updates into context-window usage snapshots", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 200_000,
+        used: 31_250,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        usage: {
+          usedTokens: 31_250,
+          maxTokens: 200_000,
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            size: 200_000,
+            used: 31_250,
+          },
+        },
+      },
+    ]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

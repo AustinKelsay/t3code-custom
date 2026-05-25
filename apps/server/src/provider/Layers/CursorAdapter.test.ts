@@ -263,6 +263,159 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("emits context-window usage from ACP usage updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-usage-update-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_USAGE_UPDATE: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(10),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepStrictEqual(usageEvent.payload.usage, {
+          usedTokens: 31_250,
+          maxTokens: 200_000,
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits prompt usage as a fallback when ACP usage updates are absent", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-prompt-usage-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_PROMPT_USAGE: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(10),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepStrictEqual(usageEvent.payload.usage, {
+          usedTokens: 130,
+          inputTokens: 100,
+          outputTokens: 23,
+          reasoningOutputTokens: 7,
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps ACP usage updates primary when prompt usage is also returned", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-primary-usage-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_USAGE_UPDATE: "1",
+          T3_ACP_PROMPT_USAGE: "1",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(10),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.equal(usageEvents.length, 1);
+      const usageEvent = usageEvents[0];
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepStrictEqual(usageEvent.payload.usage, {
+          usedTokens: 31_250,
+          maxTokens: 200_000,
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>
