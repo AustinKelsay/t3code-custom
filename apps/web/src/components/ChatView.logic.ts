@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type MessageId,
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
@@ -41,6 +42,7 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    queuedTurns: [],
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,
@@ -309,6 +311,8 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
+  delivery: "queue" | "steer";
+  messageId: MessageId | null;
   latestTurnTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
@@ -319,13 +323,19 @@ export interface LocalDispatchSnapshot {
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: {
+    preparingWorktree?: boolean;
+    delivery?: "queue" | "steer";
+    messageId?: MessageId;
+  },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
+    delivery: options?.delivery ?? "steer",
+    messageId: options?.messageId ?? null,
     latestTurnTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
@@ -340,6 +350,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   session: Thread["session"] | null;
+  messages: Thread["messages"];
+  queuedTurns: Thread["queuedTurns"];
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -353,6 +365,17 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
+
+  if (input.localDispatch.delivery === "queue" && input.localDispatch.messageId !== null) {
+    const messageId = input.localDispatch.messageId;
+    // Queue-mode dispatch is acknowledged once the server durably reflects the
+    // message into thread state, not when a later turn eventually starts.
+    return (
+      input.messages.some((message) => message.id === messageId && message.role === "user") ||
+      input.queuedTurns.some((queuedTurn) => queuedTurn.request.message.messageId === messageId)
+    );
+  }
+
   const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||

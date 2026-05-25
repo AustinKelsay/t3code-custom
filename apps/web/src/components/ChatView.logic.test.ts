@@ -1,11 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  TurnQueueItemId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
@@ -214,6 +216,9 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 
 const makeThread = (input?: {
   id?: ThreadId;
+  session?: Thread["session"];
+  messages?: Thread["messages"];
+  queuedTurns?: Thread["queuedTurns"];
   latestTurn?: {
     turnId: TurnId;
     state: "running" | "completed";
@@ -230,8 +235,9 @@ const makeThread = (input?: {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
-  session: null,
-  messages: [],
+  session: input?.session ?? null,
+  messages: input?.messages ?? [],
+  queuedTurns: input?.queuedTurns ?? [],
   proposedPlans: [],
   error: null,
   createdAt: "2026-03-29T00:00:00.000Z",
@@ -312,6 +318,20 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
       threads.map((thread) => [
         thread.id,
         Object.fromEntries(thread.messages.map((message) => [message.id, message])),
+      ]),
+    ),
+    queuedTurnIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        thread.queuedTurns.map((queuedTurn) => queuedTurn.queueItemId),
+      ]),
+    ),
+    queuedTurnByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(
+          thread.queuedTurns.map((queuedTurn) => [queuedTurn.queueItemId, queuedTurn]),
+        ),
       ]),
     ),
     activityIdsByThreadId: Object.fromEntries(
@@ -478,6 +498,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -496,6 +517,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: previousLatestTurn,
         session: previousSession,
+        messages: [],
+        queuedTurns: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -515,6 +538,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -542,6 +566,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           ...previousSession,
           updatedAt: "2026-03-29T00:01:30.000Z",
         },
+        messages: [],
+        queuedTurns: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -561,6 +587,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -585,6 +612,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           activeTurnId: TurnId.make("turn-2"),
           updatedAt: "2026-03-29T00:01:00.000Z",
         },
+        messages: [],
+        queuedTurns: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -604,6 +633,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -628,6 +658,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           activeTurnId: undefined,
           updatedAt: "2026-03-29T00:01:00.000Z",
         },
+        messages: [],
+        queuedTurns: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -647,6 +679,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -678,6 +711,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           activeTurnId: TurnId.make("turn-2"),
           updatedAt: "2026-03-29T00:01:01.000Z",
         },
+        messages: [],
+        queuedTurns: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -697,6 +732,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       interactionMode: "default",
       session: previousSession,
       messages: [],
+      queuedTurns: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -718,6 +754,184 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           ...previousSession,
           updatedAt: "2026-03-29T00:00:11.000Z",
         },
+        messages: [],
+        queuedTurns: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not clear queued local dispatch before the queued message is reflected", () => {
+    const messageId = MessageId.make("message-queued-pending");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: previousSession,
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "queue",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears queued local dispatch when the queued turn is reflected on the thread", () => {
+    const messageId = MessageId.make("message-queued-reflected");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: previousSession,
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "queue",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [
+          {
+            queueItemId: TurnQueueItemId.make("queue-item-1"),
+            request: {
+              message: {
+                messageId,
+                role: "user",
+                text: "queued follow-up",
+                attachments: [],
+              },
+            },
+            status: "pending",
+            failureReason: null,
+            createdAt: "2026-03-29T00:01:00.000Z",
+            updatedAt: "2026-03-29T00:01:00.000Z",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears queued local dispatch after the queued message is resolved into server messages", () => {
+    const messageId = MessageId.make("message-queued-resolved");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: previousSession,
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "queue",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [
+          {
+            id: messageId,
+            role: "user",
+            text: "queued follow-up",
+            createdAt: "2026-03-29T00:01:00.000Z",
+            streaming: false,
+          },
+        ],
+        queuedTurns: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears queued local dispatch when the queued turn fails after admission", () => {
+    const messageId = MessageId.make("message-queued-failed");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: previousSession,
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "queue",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [
+          {
+            queueItemId: TurnQueueItemId.make("queue-item-2"),
+            request: {
+              message: {
+                messageId,
+                role: "user",
+                text: "queued failure",
+                attachments: [],
+              },
+            },
+            status: "failed",
+            failureReason: "Provider send failed.",
+            createdAt: "2026-03-29T00:01:00.000Z",
+            updatedAt: "2026-03-29T00:01:05.000Z",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,

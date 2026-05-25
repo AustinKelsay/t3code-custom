@@ -1101,28 +1101,6 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
-    "getSourceProposedPlanReferenceForPendingTurnStart",
-  )(function* (threadId: ThreadId) {
-    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-      threadId,
-    });
-    if (Option.isNone(pendingTurnStart)) {
-      return null;
-    }
-
-    const sourceThreadId = pendingTurnStart.value.sourceProposedPlanThreadId;
-    const sourcePlanId = pendingTurnStart.value.sourceProposedPlanId;
-    if (sourceThreadId === null || sourcePlanId === null) {
-      return null;
-    }
-
-    return {
-      sourceThreadId,
-      sourcePlanId,
-    } as const;
-  });
-
   const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
     function* (threadId: ThreadId) {
       const sessions = yield* providerService.listSessions();
@@ -1131,8 +1109,8 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const getSourceProposedPlanReferenceForAcceptedTurnStart = Effect.fn(
-    "getSourceProposedPlanReferenceForAcceptedTurnStart",
+  const getPendingTurnStartForAcceptedTurnStart = Effect.fn(
+    "getPendingTurnStartForAcceptedTurnStart",
   )(function* (threadId: ThreadId, eventTurnId: TurnId | undefined) {
     if (eventTurnId === undefined) {
       return null;
@@ -1143,7 +1121,13 @@ const make = Effect.gen(function* () {
       return null;
     }
 
-    return yield* getSourceProposedPlanReferenceForPendingTurnStart(threadId);
+    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+      threadId,
+    });
+    return Option.match(pendingTurnStart, {
+      onNone: () => null,
+      onSome: (value) => value,
+    });
   });
 
   const markSourceProposedPlanImplemented = Effect.fn("markSourceProposedPlanImplemented")(
@@ -1225,9 +1209,9 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
-      const acceptedTurnStartedSourcePlan =
+      const acceptedPendingTurnStart =
         event.type === "turn.started" && shouldApplyThreadLifecycle
-          ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
+          ? yield* getPendingTurnStartForAcceptedTurnStart(thread.id, eventTurnId)
           : null;
 
       if (
@@ -1274,10 +1258,31 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
-          if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
+          if (
+            event.type === "turn.started" &&
+            acceptedPendingTurnStart !== null &&
+            acceptedPendingTurnStart.queueItemId !== null &&
+            eventTurnId !== undefined
+          ) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.queued-turn.resolve",
+              commandId: providerCommandId(event, "queued-turn-resolve"),
+              threadId: thread.id,
+              queueItemId: acceptedPendingTurnStart.queueItemId,
+              turnId: eventTurnId,
+              createdAt: now,
+            });
+          }
+
+          if (
+            event.type === "turn.started" &&
+            acceptedPendingTurnStart !== null &&
+            acceptedPendingTurnStart.sourceProposedPlanThreadId !== null &&
+            acceptedPendingTurnStart.sourceProposedPlanId !== null
+          ) {
             yield* markSourceProposedPlanImplemented(
-              acceptedTurnStartedSourcePlan.sourceThreadId,
-              acceptedTurnStartedSourcePlan.sourcePlanId,
+              acceptedPendingTurnStart.sourceProposedPlanThreadId,
+              acceptedPendingTurnStart.sourceProposedPlanId,
               thread.id,
               now,
             ).pipe(

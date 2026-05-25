@@ -170,6 +170,7 @@ const makeDefaultOrchestrationReadModel = () => {
         archivedAt: null,
         latestTurn: null,
         messages: [],
+        queuedTurns: [],
         session: null,
         activities: [],
         proposedPlans: [],
@@ -3233,6 +3234,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             archivedAt: null,
             latestTurn: null,
             messages: [],
+            queuedTurns: [],
             session: null,
             activities: [],
             proposedPlans: [],
@@ -3968,7 +3970,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const finalCommand = dispatchedCommands[4];
         assertTrue(finalCommand?.type === "thread.turn.start");
         if (finalCommand?.type === "thread.turn.start") {
-          assert.equal(finalCommand.bootstrap, undefined);
+          assert.ok(!("bootstrap" in finalCommand) || finalCommand.bootstrap === undefined);
         }
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

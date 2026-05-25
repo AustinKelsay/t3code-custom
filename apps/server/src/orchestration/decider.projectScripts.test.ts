@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TurnQueueItemId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -17,6 +18,72 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+
+function makeQueuedTurnRequest(messageId: MessageId, text: string) {
+  return {
+    message: {
+      messageId,
+      role: "user" as const,
+      text,
+      attachments: [],
+    },
+  };
+}
+
+async function seedThreadReadModel(now: string) {
+  const withProject = await Effect.runPromise(
+    projectEvent(createEmptyReadModel(now), {
+      sequence: 1,
+      eventId: asEventId("evt-project-create"),
+      aggregateKind: "project",
+      aggregateId: asProjectId("project-1"),
+      type: "project.created",
+      occurredAt: now,
+      commandId: CommandId.make("cmd-project-create"),
+      causationEventId: null,
+      correlationId: CommandId.make("cmd-project-create"),
+      metadata: {},
+      payload: {
+        projectId: asProjectId("project-1"),
+        title: "Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+  return Effect.runPromise(
+    projectEvent(withProject, {
+      sequence: 2,
+      eventId: asEventId("evt-thread-create"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-1"),
+      type: "thread.created",
+      occurredAt: now,
+      commandId: CommandId.make("cmd-thread-create"),
+      causationEventId: null,
+      correlationId: CommandId.make("cmd-thread-create"),
+      metadata: {},
+      payload: {
+        threadId: ThreadId.make("thread-1"),
+        projectId: asProjectId("project-1"),
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
@@ -194,6 +261,344 @@ describe("decider project scripts", () => {
         { id: "fastMode", value: true },
       ]),
       runtimeMode: "approval-required",
+    });
+  });
+
+  it("queues thread.turn.queue without requesting provider send", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const readModel = await seedThreadReadModel(now);
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.queue",
+          commandId: CommandId.make("cmd-turn-queue"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-user-queued"),
+            role: "user",
+            text: "queued hello",
+            attachments: [],
+          },
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual([
+      "thread.message-sent",
+      "thread.turn-queued",
+    ]);
+    const queuedEvent = events[1];
+    expect(queuedEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
+    if (queuedEvent?.type !== "thread.turn-queued") {
+      return;
+    }
+    expect(queuedEvent.payload).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      request: {
+        message: {
+          messageId: asMessageId("message-user-queued"),
+        },
+      },
+    });
+  });
+
+  it("rejects normal queued send start while another queued turn is sending", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const firstQueueItemId = TurnQueueItemId.make("queue-item-1");
+    const secondQueueItemId = TurnQueueItemId.make("queue-item-2");
+    const baseReadModel = await seedThreadReadModel(now);
+    const withFirstQueued = await Effect.runPromise(
+      projectEvent(baseReadModel, {
+        sequence: 3,
+        eventId: asEventId("evt-first-turn-queued"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-first-turn-queued"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-first-turn-queued"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId: firstQueueItemId,
+          request: makeQueuedTurnRequest(asMessageId("message-first-queued"), "first queued"),
+          createdAt: now,
+        },
+      }),
+    );
+    const withFirstSending = await Effect.runPromise(
+      projectEvent(withFirstQueued, {
+        sequence: 4,
+        eventId: asEventId("evt-first-queued-started"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.queued-turn-send-started",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-first-queued-started"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-first-queued-started"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId: firstQueueItemId,
+          messageId: asMessageId("message-first-queued"),
+          createdAt: now,
+        },
+      }),
+    );
+    const withSecondQueued = await Effect.runPromise(
+      projectEvent(withFirstSending, {
+        sequence: 5,
+        eventId: asEventId("evt-second-turn-queued"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-second-turn-queued"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-second-turn-queued"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId: secondQueueItemId,
+          request: makeQueuedTurnRequest(asMessageId("message-second-queued"), "second queued"),
+          createdAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withSecondQueued, {
+        sequence: 6,
+        eventId: asEventId("evt-session-ready"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-session-ready"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-session-ready"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.send.start",
+            commandId: CommandId.make("cmd-normal-send-start"),
+            threadId,
+            mode: "normal",
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("already has a queued turn being sent");
+  });
+
+  it("emits queued send started and shared turn-start-requested when starting a queued turn", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const queueItemId = TurnQueueItemId.make("queue-item-1");
+    const baseReadModel = await seedThreadReadModel(now);
+    const withQueuedTurn = await Effect.runPromise(
+      projectEvent(baseReadModel, {
+        sequence: 3,
+        eventId: asEventId("evt-turn-queued"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-queued"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-queued"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          request: makeQueuedTurnRequest(asMessageId("message-user-queued"), "queued hello"),
+          createdAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withQueuedTurn, {
+        sequence: 4,
+        eventId: asEventId("evt-session-ready-for-queued-send"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-session-ready-for-queued-send"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-session-ready-for-queued-send"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.send.start",
+          commandId: CommandId.make("cmd-queued-send-start"),
+          threadId,
+          mode: "normal",
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(true);
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual([
+      "thread.queued-turn-send-started",
+      "thread.turn-start-requested",
+    ]);
+    const turnStartRequestedEvent = events[1];
+    expect(turnStartRequestedEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
+    if (turnStartRequestedEvent?.type !== "thread.turn-start-requested") {
+      return;
+    }
+    expect(turnStartRequestedEvent.payload).toMatchObject({
+      threadId,
+      queueItemId,
+      messageId: asMessageId("message-user-queued"),
+      queuedRequest: {
+        message: {
+          messageId: asMessageId("message-user-queued"),
+          text: "queued hello",
+        },
+      },
+      runtimeMode: "approval-required",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    });
+  });
+
+  it("requeues failed queued turns back to pending", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const queueItemId = TurnQueueItemId.make("queue-item-1");
+    const baseReadModel = await seedThreadReadModel(now);
+    const withQueuedTurn = await Effect.runPromise(
+      projectEvent(baseReadModel, {
+        sequence: 3,
+        eventId: asEventId("evt-turn-queued-for-retry"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-queued",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-queued-for-retry"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-queued-for-retry"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          request: makeQueuedTurnRequest(
+            asMessageId("message-user-queued-retry"),
+            "queued retry hello",
+          ),
+          createdAt: now,
+        },
+      }),
+    );
+    const withSendingTurn = await Effect.runPromise(
+      projectEvent(withQueuedTurn, {
+        sequence: 4,
+        eventId: asEventId("evt-turn-sending-for-retry"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.queued-turn-send-started",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-sending-for-retry"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-sending-for-retry"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          messageId: asMessageId("message-user-queued-retry"),
+          createdAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withSendingTurn, {
+        sequence: 5,
+        eventId: asEventId("evt-turn-failed-for-retry"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.queued-turn-send-failed",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-failed-for-retry"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-turn-failed-for-retry"),
+        metadata: {},
+        payload: {
+          threadId,
+          queueItemId,
+          messageId: asMessageId("message-user-queued-retry"),
+          reason: "Provider send failed.",
+          createdAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.retry",
+          commandId: CommandId.make("cmd-queued-turn-retry"),
+          threadId,
+          queueItemId,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(false);
+    if (Array.isArray(result)) {
+      return;
+    }
+    expect(result).toMatchObject({
+      type: "thread.queued-turn-requeued",
+      payload: {
+        threadId,
+        queueItemId,
+      },
     });
   });
 

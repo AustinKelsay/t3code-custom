@@ -5,6 +5,11 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import {
+  applyQueuedTurnLifecycleEvent,
+  applyQueuedTurnLifecycleOperation,
+  getQueuedTurnLifecycleOperation,
+} from "@t3tools/shared/orchestrationQueue";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -20,8 +25,13 @@ import {
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
+  ThreadQueuedTurnSendFailedPayload,
+  ThreadQueuedTurnRequeuedPayload,
+  ThreadQueuedTurnResolvedPayload,
+  ThreadQueuedTurnSendStartedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadTurnQueuedPayload,
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
@@ -265,6 +275,7 @@ export function projectEvent(
             archivedAt: null,
             deletedAt: null,
             messages: [],
+            queuedTurns: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -417,6 +428,133 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-queued":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnQueuedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const operation = getQueuedTurnLifecycleOperation({
+          type: event.type,
+          payload,
+        });
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            queuedTurns: applyQueuedTurnLifecycleOperation(thread.queuedTurns, operation),
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.queued-turn-send-started":
+      return decodeForEvent(
+        ThreadQueuedTurnSendStartedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, {
+                type: event.type,
+                payload,
+              }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-turn-resolved":
+      return decodeForEvent(
+        ThreadQueuedTurnResolvedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, {
+                type: event.type,
+                payload,
+              }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-turn-requeued":
+      return decodeForEvent(
+        ThreadQueuedTurnRequeuedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, {
+                type: event.type,
+                payload,
+              }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-turn-send-failed":
+      return decodeForEvent(
+        ThreadQueuedTurnSendFailedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, {
+                type: event.type,
+                payload,
+              }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {

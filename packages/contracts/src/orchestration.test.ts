@@ -18,9 +18,15 @@ import {
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
-  ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
+  ThreadQueuedTurnSendFailedPayload,
+  ThreadQueuedTurnRequeuedPayload,
+  ThreadQueuedTurnResolvedPayload,
+  ThreadQueuedTurnSendStartedPayload,
+  ThreadTurnQueueCommand,
+  ThreadTurnQueuedPayload,
+  ThreadTurnStartCommand,
   ThreadTurnStartRequestedPayload,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -32,8 +38,22 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadTurnQueueCommand = Schema.decodeUnknownEffect(ThreadTurnQueueCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
+);
+const decodeThreadTurnQueuedPayload = Schema.decodeUnknownEffect(ThreadTurnQueuedPayload);
+const decodeThreadQueuedTurnSendStartedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnSendStartedPayload,
+);
+const decodeThreadQueuedTurnResolvedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnResolvedPayload,
+);
+const decodeThreadQueuedTurnRequeuedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnRequeuedPayload,
+);
+const decodeThreadQueuedTurnSendFailedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnSendFailedPayload,
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
@@ -46,6 +66,18 @@ function getOptionValue(
 ): unknown {
   return options?.find((option) => option.id === id)?.value;
 }
+
+function makeQueuedTurnRequest(messageId: string, overrides?: { text?: string }) {
+  return {
+    message: {
+      messageId,
+      role: "user" as const,
+      text: overrides?.text ?? "queued message",
+      attachments: [],
+    },
+  };
+}
+
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
@@ -245,6 +277,25 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
     assert.strictEqual(parsed.modelSelection?.instanceId, "codex");
     assert.strictEqual(parsed.runtimeMode, "full-access");
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes thread.turn.queue separately from thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnQueueCommand({
+      type: "thread.turn.queue",
+      commandId: "cmd-turn-queue",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-queue",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.turn.queue");
+    assert.strictEqual(parsed.message.messageId, "msg-queue");
   }),
 );
 
@@ -542,11 +593,15 @@ it.effect(
       const parsed = yield* decodeThreadTurnStartRequestedPayload({
         threadId: "thread-1",
         messageId: "msg-1",
+        queueItemId: "queue-item-1",
+        queuedRequest: makeQueuedTurnRequest("msg-1"),
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.modelSelection, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.queueItemId, "queue-item-1");
+      assert.strictEqual(parsed.queuedRequest?.message.messageId, "msg-1");
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
 );
@@ -578,6 +633,99 @@ it.effect("decodes thread.turn-start-requested title seed when present", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
+  }),
+);
+
+it.effect("decodes thread.turn-queued payload", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnQueuedPayload({
+      threadId: "thread-1",
+      queueItemId: "queue-item-1",
+      request: makeQueuedTurnRequest("msg-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.request.message.messageId, "msg-1");
+  }),
+);
+
+it.effect("decodes queued turn dispatch lifecycle payloads", () =>
+  Effect.gen(function* () {
+    const dispatchStarted = yield* decodeThreadQueuedTurnSendStartedPayload({
+      threadId: "thread-1",
+      queueItemId: "queue-item-1",
+      messageId: "msg-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const resolved = yield* decodeThreadQueuedTurnResolvedPayload({
+      threadId: "thread-1",
+      queueItemId: "queue-item-1",
+      messageId: "msg-1",
+      turnId: "turn-1",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    const requeued = yield* decodeThreadQueuedTurnRequeuedPayload({
+      threadId: "thread-1",
+      queueItemId: "queue-item-1",
+      messageId: "msg-1",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    const dispatchFailed = yield* decodeThreadQueuedTurnSendFailedPayload({
+      threadId: "thread-1",
+      queueItemId: "queue-item-1",
+      messageId: "msg-1",
+      reason: "Provider session is not ready.",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    assert.strictEqual(dispatchStarted.queueItemId, "queue-item-1");
+    assert.strictEqual(resolved.turnId, "turn-1");
+    assert.strictEqual(requeued.messageId, "msg-1");
+    assert.strictEqual(dispatchFailed.reason, "Provider session is not ready.");
+  }),
+);
+
+it.effect("decodes queued turn orchestration events", () =>
+  Effect.gen(function* () {
+    const queued = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-turn-queued",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-turn-queue",
+      causationEventId: null,
+      correlationId: "cmd-turn-queue",
+      metadata: {},
+      type: "thread.turn-queued",
+      payload: {
+        threadId: "thread-1",
+        queueItemId: "queue-item-1",
+        request: makeQueuedTurnRequest("msg-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const failed = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-queued-turn-send-failed",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:01.000Z",
+      commandId: "cmd-queued-turn-send-failed",
+      causationEventId: null,
+      correlationId: "cmd-turn-queue",
+      metadata: {},
+      type: "thread.queued-turn-send-failed",
+      payload: {
+        threadId: "thread-1",
+        queueItemId: "queue-item-1",
+        messageId: "msg-1",
+        reason: "Provider session is not ready.",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      },
+    });
+
+    assert.strictEqual(queued.type, "thread.turn-queued");
+    assert.strictEqual(failed.type, "thread.queued-turn-send-failed");
   }),
 );
 

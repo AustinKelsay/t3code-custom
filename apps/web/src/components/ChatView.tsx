@@ -13,6 +13,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
+  type TurnQueueItemId,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
@@ -104,7 +105,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, Clock3Icon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -372,13 +373,29 @@ function useLocalDispatchState(input: {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
 
   const beginLocalDispatch = useCallback(
-    (options?: { preparingWorktree?: boolean }) => {
+    (options?: {
+      preparingWorktree?: boolean;
+      delivery?: "queue" | "steer";
+      messageId?: MessageId;
+    }) => {
       const preparingWorktree = Boolean(options?.preparingWorktree);
       setLocalDispatch((current) => {
         if (current) {
-          return current.preparingWorktree === preparingWorktree
-            ? current
-            : { ...current, preparingWorktree };
+          const nextDelivery = options?.delivery ?? current.delivery;
+          const nextMessageId = options?.messageId ?? current.messageId;
+          if (
+            current.preparingWorktree === preparingWorktree &&
+            current.delivery === nextDelivery &&
+            current.messageId === nextMessageId
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            preparingWorktree,
+            delivery: nextDelivery,
+            messageId: nextMessageId,
+          };
         }
         return createLocalDispatchSnapshot(input.activeThread, options);
       });
@@ -397,6 +414,8 @@ function useLocalDispatchState(input: {
         phase: input.phase,
         latestTurn: input.activeLatestTurn,
         session: input.activeThread?.session ?? null,
+        messages: input.activeThread?.messages ?? [],
+        queuedTurns: input.activeThread?.queuedTurns ?? [],
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
         threadError: input.threadError,
@@ -405,6 +424,8 @@ function useLocalDispatchState(input: {
       input.activeLatestTurn,
       input.activePendingApproval,
       input.activePendingUserInput,
+      input.activeThread?.messages,
+      input.activeThread?.queuedTurns,
       input.activeThread?.session,
       input.phase,
       input.threadError,
@@ -1178,7 +1199,31 @@ export default function ChatView(props: ChatViewProps) {
     savedEnvironmentRuntimeById,
     serverConfig?.environment.label,
   ]);
-  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+  async function handleRetryQueuedTurn(queueItemId: TurnQueueItemId) {
+    if (!activeThread || isConnecting || activeEnvironmentUnavailable) {
+      return;
+    }
+    const api = readEnvironmentApi(environmentId);
+    if (!api) {
+      return;
+    }
+    setThreadError(activeThread.id, null);
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.queued-turn.retry",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        queueItemId,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to retry queued turn.",
+      );
+    }
+  }
+  const composerBannerItems: ComposerBannerStackItem[] = (() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
       items.push({
@@ -1245,17 +1290,61 @@ export default function ChatView(props: ChatViewProps) {
         },
       });
     }
+    const queuedTurns = activeThread?.queuedTurns ?? [];
+    const failedQueuedTurns = queuedTurns.filter((queuedTurn) => queuedTurn.status === "failed");
+    const pendingQueuedTurnCount = queuedTurns.filter(
+      (queuedTurn) => queuedTurn.status === "pending",
+    ).length;
+    const sendingQueuedTurnCount = queuedTurns.filter(
+      (queuedTurn) => queuedTurn.status === "sending",
+    ).length;
+    for (const failedQueuedTurn of failedQueuedTurns) {
+      const queuedMessageText = failedQueuedTurn.request.message.text.trim();
+      const queuedMessagePreview =
+        queuedMessageText && queuedMessageText.length > 0 ? truncate(queuedMessageText, 140) : null;
+      items.push({
+        id: `queued-turn-failed:${failedQueuedTurn.queueItemId}`,
+        variant: "error",
+        icon: <TriangleAlertIcon />,
+        title: "Queued turn failed",
+        description: (
+          <>
+            {queuedMessagePreview ? (
+              <>
+                <span className="font-medium">&ldquo;{queuedMessagePreview}&rdquo;</span>{" "}
+              </>
+            ) : null}
+            {failedQueuedTurn.failureReason ??
+              "The queued turn could not be sent. Retry it after the current session settles."}
+          </>
+        ),
+        actions: (
+          <Button
+            size="xs"
+            onClick={() => void handleRetryQueuedTurn(failedQueuedTurn.queueItemId)}
+          >
+            Retry
+          </Button>
+        ),
+      });
+    }
+    if (pendingQueuedTurnCount > 0 || sendingQueuedTurnCount > 0) {
+      const queuedTurnCount = pendingQueuedTurnCount + sendingQueuedTurnCount;
+      items.push({
+        id: `queued-turns:${activeThread?.id ?? "none"}`,
+        variant: "info",
+        icon: <Clock3Icon />,
+        title: queuedTurnCount === 1 ? "1 turn is queued" : `${queuedTurnCount} turns are queued`,
+        description:
+          sendingQueuedTurnCount > 0 && pendingQueuedTurnCount > 0
+            ? `${sendingQueuedTurnCount} sending, ${pendingQueuedTurnCount} waiting for the thread to become ready.`
+            : sendingQueuedTurnCount > 0
+              ? "The next queued turn is being sent now."
+              : "Queued turns will send automatically when the thread becomes ready.",
+      });
+    }
     return items;
-  }, [
-    activeEnvironmentUnavailableState,
-    handleReconnectActiveEnvironment,
-    navigate,
-    reconnectingEnvironmentId,
-    showVersionMismatchBanner,
-    versionMismatch,
-    versionMismatchDismissKey,
-    versionMismatchServerLabel,
-  ]);
+  })();
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
@@ -2635,6 +2724,7 @@ export default function ChatView(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const delivery = phase === "running" ? "queue" : "steer";
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -2704,9 +2794,6 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
-
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
@@ -2715,6 +2802,12 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    sendInFlightRef.current = true;
+    beginLocalDispatch({
+      preparingWorktree: Boolean(baseBranchForWorktree),
+      delivery,
+      messageId: messageIdForSend,
+    });
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -2854,23 +2947,38 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: threadIdForSend,
-        message: {
-          messageId: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          attachments: turnAttachments,
-        },
-        modelSelection: ctxSelectedModelSelection,
-        titleSeed: title,
-        runtimeMode,
-        interactionMode,
-        ...(bootstrap ? { bootstrap } : {}),
-        createdAt: messageCreatedAt,
-      });
+      const turnStartCommand =
+        delivery === "queue"
+          ? {
+              type: "thread.turn.queue" as const,
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user" as const,
+                text: outgoingMessageText,
+                attachments: turnAttachments,
+              },
+              createdAt: messageCreatedAt,
+            }
+          : {
+              type: "thread.turn.start" as const,
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user" as const,
+                text: outgoingMessageText,
+                attachments: turnAttachments,
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode,
+              ...(bootstrap ? { bootstrap } : {}),
+              createdAt: messageCreatedAt,
+            };
+      await api.orchestration.dispatchCommand(turnStartCommand);
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (
@@ -3133,7 +3241,10 @@ export default function ChatView(props: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginLocalDispatch({
+        preparingWorktree: false,
+        messageId: messageIdForSend,
+      });
       setThreadError(threadIdForSend, null);
 
       // Scroll to the current end *before* adding the optimistic message.

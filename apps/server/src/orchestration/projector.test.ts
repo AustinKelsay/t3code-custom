@@ -91,12 +91,172 @@ describe("orchestration projector", () => {
         archivedAt: null,
         deletedAt: null,
         messages: [],
+        queuedTurns: [],
         proposedPlans: [],
         activities: [],
         checkpoints: [],
         session: null,
       },
     ]);
+  });
+
+  it("projects queued turn lifecycle events", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const queued = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.turn-queued",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-turn-queue",
+          payload: {
+            threadId: "thread-1",
+            queueItemId: "queue-item-1",
+            request: {
+              message: {
+                messageId: "message-1",
+                role: "user",
+                text: "queued message",
+                attachments: [],
+              },
+            },
+            createdAt: now,
+          },
+        }),
+      ),
+    );
+    expect(queued.threads[0]?.queuedTurns[0]).toMatchObject({
+      queueItemId: "queue-item-1",
+      request: {
+        message: {
+          messageId: "message-1",
+        },
+      },
+      status: "pending",
+    });
+
+    const sending = await Effect.runPromise(
+      projectEvent(
+        queued,
+        makeEvent({
+          sequence: 3,
+          type: "thread.queued-turn-send-started",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-queued-turn-send-started",
+          payload: {
+            threadId: "thread-1",
+            queueItemId: "queue-item-1",
+            messageId: "message-1",
+            createdAt: now,
+          },
+        }),
+      ),
+    );
+    expect(sending.threads[0]?.queuedTurns[0]?.status).toBe("sending");
+
+    const failed = await Effect.runPromise(
+      projectEvent(
+        sending,
+        makeEvent({
+          sequence: 4,
+          type: "thread.queued-turn-send-failed",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-queued-turn-send-failed",
+          payload: {
+            threadId: "thread-1",
+            queueItemId: "queue-item-1",
+            messageId: "message-1",
+            reason: "Provider rejected queued turn.",
+            createdAt: now,
+          },
+        }),
+      ),
+    );
+    expect(failed.threads[0]?.queuedTurns[0]).toMatchObject({
+      status: "failed",
+      failureReason: "Provider rejected queued turn.",
+    });
+
+    const requeued = await Effect.runPromise(
+      projectEvent(
+        failed,
+        makeEvent({
+          sequence: 5,
+          type: "thread.queued-turn-requeued",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-queued-turn-requeued",
+          payload: {
+            threadId: "thread-1",
+            queueItemId: "queue-item-1",
+            messageId: "message-1",
+            createdAt: now,
+          },
+        }),
+      ),
+    );
+    expect(requeued.threads[0]?.queuedTurns[0]).toMatchObject({
+      status: "pending",
+      failureReason: null,
+    });
+
+    const resolved = await Effect.runPromise(
+      projectEvent(
+        requeued,
+        makeEvent({
+          sequence: 6,
+          type: "thread.queued-turn-resolved",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-queued-turn-resolved",
+          payload: {
+            threadId: "thread-1",
+            queueItemId: "queue-item-1",
+            messageId: "message-1",
+            turnId: "turn-1",
+            createdAt: now,
+          },
+        }),
+      ),
+    );
+    expect(resolved.threads[0]?.queuedTurns).toEqual([]);
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
@@ -628,10 +788,31 @@ describe("orchestration projector", () => {
       }),
       makeEvent({
         sequence: 10,
-        type: "thread.reverted",
+        type: "thread.turn-queued",
         aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:05.000Z",
+        commandId: "cmd-turn-queued-before-revert",
+        payload: {
+          threadId: "thread-1",
+          queueItemId: "queue-item-revert",
+          request: {
+            message: {
+              messageId: "message-revert-queued",
+              role: "user",
+              text: "Queued work survives revert",
+              attachments: [],
+            },
+          },
+          createdAt: "2026-02-23T10:00:05.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 11,
+        type: "thread.reverted",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:05.500Z",
         commandId: "cmd-revert",
         payload: {
           threadId: "thread-1",
@@ -658,6 +839,18 @@ describe("orchestration projector", () => {
     ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
     expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
+    expect(thread?.queuedTurns).toMatchObject([
+      {
+        queueItemId: "queue-item-revert",
+        request: {
+          message: {
+            messageId: "message-revert-queued",
+            text: "Queued work survives revert",
+          },
+        },
+        status: "pending",
+      },
+    ]);
   });
 
   it("does not fallback-retain messages tied to removed turn IDs", async () => {

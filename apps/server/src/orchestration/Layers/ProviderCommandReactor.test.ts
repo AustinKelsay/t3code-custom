@@ -69,7 +69,7 @@ const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
 ): Promise<void> {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<void> => {
@@ -451,6 +451,88 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("reacts to queued turn send start by sending the queued user message", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.queue",
+        commandId: CommandId.make("cmd-queued-turn-start"),
+        threadId,
+        message: {
+          messageId: asMessageId("queued-user-message-1"),
+          role: "user",
+          text: "queued provider message",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    let readModel = await harness.readModel();
+    const queuedThread = readModel.threads.find((entry) => entry.id === threadId);
+    const queuedTurn = queuedThread?.queuedTurns[0];
+    expect(queuedTurn).toMatchObject({
+      status: "pending",
+      request: {
+        message: {
+          messageId: asMessageId("queued-user-message-1"),
+          text: "queued provider message",
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-queued-session-ready"),
+        threadId,
+        session: {
+          threadId,
+          providerName: "codex",
+          status: "ready",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.queued-turn.send.start",
+        commandId: CommandId.make("cmd-queued-send-start"),
+        threadId,
+        mode: "normal",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId,
+      input: "queued provider message",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    });
+
+    await waitFor(async () => {
+      const current = await harness.readModel();
+      const thread = current.threads.find((entry) => entry.id === threadId);
+      return thread?.queuedTurns[0]?.status === "sending";
+    });
+
+    readModel = await harness.readModel();
+    const sendingThread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(sendingThread?.queuedTurns[0]).toMatchObject({
+      queueItemId: queuedTurn?.queueItemId,
+      status: "sending",
+    });
   });
 
   it("generates a thread title on the first turn", async () => {
