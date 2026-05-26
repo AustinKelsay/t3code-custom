@@ -81,6 +81,7 @@ function makeSnapshot(input: {
           createdAt: now,
           updatedAt: now,
         })),
+        steerEntries: [],
         proposedPlans: [],
         activities: [],
         checkpoints: [],

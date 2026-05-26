@@ -19,6 +19,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnQueueItemId,
+  TurnSteerEntryId,
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -347,6 +348,15 @@ export const OrchestrationQueuedTurn = Schema.Struct({
 });
 export type OrchestrationQueuedTurn = typeof OrchestrationQueuedTurn.Type;
 
+export const OrchestrationSteerEntry = Schema.Struct({
+  steerEntryId: TurnSteerEntryId,
+  turnId: TurnId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type OrchestrationSteerEntry = typeof OrchestrationSteerEntry.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -365,6 +375,9 @@ export const OrchestrationThread = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   queuedTurns: Schema.Array(OrchestrationQueuedTurn).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  steerEntries: Schema.Array(OrchestrationSteerEntry).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -658,6 +671,16 @@ export const ThreadTurnQueueCommand = Schema.Struct({
 });
 export type ThreadTurnQueueCommand = typeof ThreadTurnQueueCommand.Type;
 
+export const ThreadTurnSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  message: ThreadTurnStartMessage,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnSteerCommand = typeof ThreadTurnSteerCommand.Type;
+
 const ClientThreadTurnQueueCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.queue"),
   commandId: CommandId,
@@ -736,6 +759,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnQueueCommand,
+  ThreadTurnSteerCommand,
   ThreadTurnInterruptCommand,
   ThreadQueuedTurnRetryCommand,
   ThreadQueuedTurnRemoveCommand,
@@ -760,6 +784,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ClientThreadTurnQueueCommand,
+  ThreadTurnSteerCommand,
   ThreadTurnInterruptCommand,
   ThreadQueuedTurnRetryCommand,
   ThreadQueuedTurnRemoveCommand,
@@ -861,6 +886,37 @@ const ThreadQueuedTurnSendFailCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnSteerAcceptCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer.accept"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  steerEntryId: TurnSteerEntryId,
+  turnId: TurnId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnSteerFailCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer.fail"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  messageId: MessageId,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnSteerFallbackToQueueCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer.fallback-to-queue"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  message: ThreadTurnStartMessage,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -872,6 +928,9 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnSendStartCommand,
   ThreadQueuedTurnResolveCommand,
   ThreadQueuedTurnSendFailCommand,
+  ThreadTurnSteerAcceptCommand,
+  ThreadTurnSteerFailCommand,
+  ThreadTurnSteerFallbackToQueueCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -895,6 +954,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-queued",
+  "thread.turn-steer-requested",
+  "thread.turn-steer-accepted",
+  "thread.turn-steer-failed",
+  "thread.turn-steer-fallback-queued",
   "thread.queued-turn-send-started",
   "thread.queued-turn-resolved",
   "thread.queued-turn-requeued",
@@ -1030,6 +1093,43 @@ export const ThreadTurnQueuedPayload = Schema.Struct({
   request: ThreadQueuedTurnRequest,
   createdAt: IsoDateTime,
 });
+
+export const ThreadTurnSteerRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadTurnSteerAcceptedPayload = Schema.Struct({
+  threadId: ThreadId,
+  steerEntryId: TurnSteerEntryId,
+  turnId: TurnId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnSteerAcceptedPayload = typeof ThreadTurnSteerAcceptedPayload.Type;
+
+export const ThreadTurnSteerFailedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  messageId: MessageId,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnSteerFailedPayload = typeof ThreadTurnSteerFailedPayload.Type;
+
+export const ThreadTurnSteerFallbackQueuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  queueItemId: TurnQueueItemId,
+  messageId: MessageId,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnSteerFallbackQueuedPayload = typeof ThreadTurnSteerFallbackQueuedPayload.Type;
 
 export const ThreadQueuedTurnSendStartedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1216,6 +1316,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-queued"),
     payload: ThreadTurnQueuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-requested"),
+    payload: ThreadTurnSteerRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-accepted"),
+    payload: ThreadTurnSteerAcceptedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-failed"),
+    payload: ThreadTurnSteerFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-fallback-queued"),
+    payload: ThreadTurnSteerFallbackQueuedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

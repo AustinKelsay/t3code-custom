@@ -322,6 +322,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             },
           ],
           queuedTurns: [],
+          steerEntries: [],
           proposedPlans: [
             {
               id: "plan-1",

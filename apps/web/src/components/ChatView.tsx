@@ -156,6 +156,7 @@ import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  buildComposerTurnDispatch,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
@@ -164,12 +165,15 @@ import {
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  type FollowUpBehaviorOverride,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveFollowUpBehavior,
+  resolveProviderTurnSteeringSupport,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -416,6 +420,8 @@ function useLocalDispatchState(input: {
         session: input.activeThread?.session ?? null,
         messages: input.activeThread?.messages ?? [],
         queuedTurns: input.activeThread?.queuedTurns ?? [],
+        steerEntries: input.activeThread?.steerEntries ?? [],
+        activities: input.activeThread?.activities ?? [],
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
         threadError: input.threadError,
@@ -426,6 +432,8 @@ function useLocalDispatchState(input: {
       input.activePendingUserInput,
       input.activeThread?.messages,
       input.activeThread?.queuedTurns,
+      input.activeThread?.steerEntries,
+      input.activeThread?.activities,
       input.activeThread?.session,
       input.phase,
       input.threadError,
@@ -2740,7 +2748,10 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    options?: { followUpBehaviorOverride?: FollowUpBehaviorOverride },
+  ) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (
@@ -2767,7 +2778,6 @@ export default function ChatView(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const delivery = phase === "running" ? "queue" : "steer";
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -2845,6 +2855,18 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const activeTurnIdForSend = activeThread.session?.activeTurnId ?? null;
+    const delivery =
+      phase === "running" &&
+      resolveFollowUpBehavior({
+        setting: settings.followUpBehavior,
+        override: options?.followUpBehaviorOverride,
+        activeTurnState: activeTurnIdForSend ? "active" : "inactive",
+        providerTurnSteering: resolveProviderTurnSteeringSupport(activeProviderStatus),
+        attachmentCount: composerImagesSnapshot.length,
+      }).behavior === "queue"
+        ? "queue"
+        : "steer";
     sendInFlightRef.current = true;
     beginLocalDispatch({
       preparingWorktree: Boolean(baseBranchForWorktree),
@@ -2990,37 +3012,24 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      const turnStartCommand =
-        delivery === "queue"
-          ? {
-              type: "thread.turn.queue" as const,
-              commandId: newCommandId(),
-              threadId: threadIdForSend,
-              message: {
-                messageId: messageIdForSend,
-                role: "user" as const,
-                text: outgoingMessageText,
-                attachments: turnAttachments,
-              },
-              createdAt: messageCreatedAt,
-            }
-          : {
-              type: "thread.turn.start" as const,
-              commandId: newCommandId(),
-              threadId: threadIdForSend,
-              message: {
-                messageId: messageIdForSend,
-                role: "user" as const,
-                text: outgoingMessageText,
-                attachments: turnAttachments,
-              },
-              modelSelection: ctxSelectedModelSelection,
-              titleSeed: title,
-              runtimeMode,
-              interactionMode,
-              ...(bootstrap ? { bootstrap } : {}),
-              createdAt: messageCreatedAt,
-            };
+      const { command: turnStartCommand } = buildComposerTurnDispatch({
+        commandId: newCommandId(),
+        threadId: threadIdForSend,
+        activeTurnId: activeTurnIdForSend,
+        messageId: messageIdForSend,
+        text: outgoingMessageText,
+        attachments: turnAttachments,
+        createdAt: messageCreatedAt,
+        phase,
+        modelSelection: ctxSelectedModelSelection,
+        titleSeed: title,
+        runtimeMode,
+        interactionMode,
+        ...(bootstrap ? { bootstrap } : {}),
+        followUpBehavior: settings.followUpBehavior,
+        followUpBehaviorOverride: options?.followUpBehaviorOverride,
+        providerTurnSteering: resolveProviderTurnSteeringSupport(activeProviderStatus),
+      });
       await api.orchestration.dispatchCommand(turnStartCommand);
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {

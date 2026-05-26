@@ -10,10 +10,12 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationQueuedTurn,
   OrchestrationQueuedTurnStatus,
+  OrchestrationSteerEntry,
   OrchestrationThread,
   ProjectScript,
   TurnId,
   TurnQueueItemId,
+  TurnSteerEntryId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
   type OrchestrationMessage,
@@ -1096,6 +1098,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const queuedTurnsByThread = new Map<string, Array<OrchestrationQueuedTurn>>();
+              const steerEntriesByThread = new Map<string, Array<OrchestrationSteerEntry>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
@@ -1165,6 +1168,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   createdAt: row.createdAt,
                 });
                 activitiesByThread.set(row.threadId, threadActivities);
+
+                if (
+                  row.kind === "turn.steer.accepted" &&
+                  typeof row.payload === "object" &&
+                  row.payload !== null
+                ) {
+                  const payload = row.payload as Record<string, unknown>;
+                  const steerEntryId =
+                    typeof payload.steerEntryId === "string"
+                      ? TurnSteerEntryId.make(payload.steerEntryId)
+                      : TurnSteerEntryId.make(row.activityId);
+                  const messageId =
+                    typeof payload.messageId === "string"
+                      ? MessageId.make(payload.messageId)
+                      : null;
+                  const text = typeof payload.text === "string" ? payload.text : null;
+                  if (row.turnId !== null && messageId !== null && text !== null) {
+                    const threadSteerEntries = steerEntriesByThread.get(row.threadId) ?? [];
+                    threadSteerEntries.push({
+                      steerEntryId,
+                      turnId: row.turnId,
+                      messageId,
+                      text,
+                      createdAt: row.createdAt,
+                    });
+                    steerEntriesByThread.set(row.threadId, threadSteerEntries);
+                  }
+                }
               }
 
               for (const row of checkpointRows) {
@@ -1267,6 +1298,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 queuedTurns: queuedTurnsByThread.get(row.threadId) ?? [],
+                steerEntries: (steerEntriesByThread.get(row.threadId) ?? []).toSorted(
+                  (left, right) =>
+                    left.createdAt.localeCompare(right.createdAt) ||
+                    left.steerEntryId.localeCompare(right.steerEntryId),
+                ),
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
@@ -1500,6 +1536,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   deletedAt: row.deletedAt,
                   messages: [],
                   queuedTurns: queuedTurnsByThread.get(row.threadId) ?? [],
+                  steerEntries: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
                   checkpoints: [],

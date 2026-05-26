@@ -531,14 +531,17 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
-      : null
-    : extractToolDetail(payload, title ?? activity.summary);
+  const steerDetail = extractSteerActivityDetail(activity.kind, payload);
+  const detail = steerDetail
+    ? steerDetail
+    : isTaskActivity
+      ? !taskDetailAsLabel &&
+        payload &&
+        typeof payload.detail === "string" &&
+        payload.detail.length > 0
+        ? stripTrailingExitCode(payload.detail).output
+        : null
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -583,6 +586,24 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+function extractSteerActivityDetail(
+  kind: string,
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (kind === "turn.steer.accepted" && typeof payload?.text === "string") {
+    const text = payload.text.trim();
+    return text.length > 0 ? text : null;
+  }
+  if (
+    (kind === "turn.steer.failed" || kind === "turn.steer.fallback-queued") &&
+    typeof payload?.reason === "string"
+  ) {
+    const reason = payload.reason.trim();
+    return reason.length > 0 ? reason : null;
+  }
+  return null;
 }
 
 function collapseDerivedWorkLogEntries(

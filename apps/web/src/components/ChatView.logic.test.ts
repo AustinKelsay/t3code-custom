@@ -8,6 +8,9 @@ import {
   ThreadId,
   TurnId,
   TurnQueueItemId,
+  CommandId,
+  TurnSteerEntryId,
+  EventId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
@@ -15,12 +18,14 @@ import { type Thread } from "../types";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  buildComposerTurnDispatch,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   resolveFollowUpBehavior,
+  resolveProviderTurnSteeringSupport,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
@@ -150,6 +155,117 @@ describe("resolveFollowUpBehavior", () => {
       requestedBehavior: "steer",
       fallbackReason: "non-steerable-payload",
     });
+  });
+});
+
+describe("resolveProviderTurnSteeringSupport", () => {
+  it("reads provider steering support from the provider status snapshot", () => {
+    expect(
+      resolveProviderTurnSteeringSupport({
+        driver: ProviderDriverKind.make("codex"),
+        capabilities: { turnSteering: "native" },
+      }),
+    ).toBe("native");
+    expect(
+      resolveProviderTurnSteeringSupport({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        capabilities: { turnSteering: "unsupported" },
+      }),
+    ).toBe("unsupported");
+  });
+
+  it("keeps legacy Codex snapshots steerable when provider capabilities are missing", () => {
+    expect(
+      resolveProviderTurnSteeringSupport({
+        driver: ProviderDriverKind.make("codex"),
+      }),
+    ).toBe("native");
+    expect(resolveProviderTurnSteeringSupport(null)).toBe("unsupported");
+  });
+});
+
+describe("buildComposerTurnDispatch", () => {
+  const baseInput = {
+    commandId: CommandId.make("command-1"),
+    threadId: ThreadId.make("thread-1"),
+    activeTurnId: TurnId.make("turn-active"),
+    messageId: MessageId.make("message-1"),
+    text: "keep going",
+    attachments: [],
+    createdAt: "2026-05-25T12:00:00.000Z",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+      options: [],
+    },
+    titleSeed: "keep going",
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    followUpBehavior: "steer" as const,
+  };
+
+  it("dispatches a text-only running follow-up as turn steering when Steer is selected", () => {
+    const result = buildComposerTurnDispatch({
+      ...baseInput,
+      phase: "running",
+    });
+
+    expect(result.delivery).toBe("steer");
+    expect(result.command).toEqual({
+      type: "thread.turn.steer",
+      commandId: baseInput.commandId,
+      threadId: baseInput.threadId,
+      turnId: baseInput.activeTurnId,
+      message: {
+        messageId: baseInput.messageId,
+        role: "user",
+        text: "keep going",
+        attachments: [],
+      },
+      createdAt: baseInput.createdAt,
+    });
+  });
+
+  it("dispatches a running follow-up as queued when Queue is selected", () => {
+    const result = buildComposerTurnDispatch({
+      ...baseInput,
+      phase: "running",
+      followUpBehavior: "queue",
+    });
+
+    expect(result.delivery).toBe("queue");
+    expect(result.command.type).toBe("thread.turn.queue");
+  });
+
+  it("honors a one-shot Steer override while Queue is selected", () => {
+    const result = buildComposerTurnDispatch({
+      ...baseInput,
+      phase: "running",
+      followUpBehavior: "queue",
+      followUpBehaviorOverride: "steer",
+    });
+
+    expect(result.delivery).toBe("steer");
+    expect(result.command.type).toBe("thread.turn.steer");
+  });
+
+  it("falls back to Queue for running Steer follow-ups with attachments", () => {
+    const result = buildComposerTurnDispatch({
+      ...baseInput,
+      phase: "running",
+      attachments: [
+        {
+          type: "image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+          dataUrl: "data:image/png;base64,AA==",
+        },
+      ],
+    });
+
+    expect(result.delivery).toBe("queue");
+    expect(result.command.type).toBe("thread.turn.queue");
   });
 });
 
@@ -296,6 +412,7 @@ const makeThread = (input?: {
   session?: Thread["session"];
   messages?: Thread["messages"];
   queuedTurns?: Thread["queuedTurns"];
+  steerEntries?: Thread["steerEntries"];
   latestTurn?: {
     turnId: TurnId;
     state: "running" | "completed";
@@ -315,6 +432,7 @@ const makeThread = (input?: {
   session: input?.session ?? null,
   messages: input?.messages ?? [],
   queuedTurns: input?.queuedTurns ?? [],
+  steerEntries: input?.steerEntries ?? [],
   proposedPlans: [],
   error: null,
   createdAt: "2026-03-29T00:00:00.000Z",
@@ -576,6 +694,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -596,6 +715,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         session: previousSession,
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -616,6 +737,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -645,6 +767,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -665,6 +789,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -691,6 +816,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -711,6 +838,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -737,6 +865,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -757,6 +887,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -790,6 +921,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -810,6 +943,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: previousSession,
       messages: [],
       queuedTurns: [],
+      steerEntries: [],
       proposedPlans: [],
       error: null,
       createdAt: "2026-03-29T00:00:00.000Z",
@@ -833,6 +967,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -867,6 +1003,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -917,6 +1055,171 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
             updatedAt: "2026-03-29T00:01:00.000Z",
           },
         ],
+        steerEntries: [],
+        activities: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears steer local dispatch when the accepted steer entry is reflected on the thread", () => {
+    const messageId = MessageId.make("message-steer-accepted");
+    const activeTurnId = TurnId.make("turn-2");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+        },
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "steer",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [],
+        steerEntries: [
+          {
+            steerEntryId: TurnSteerEntryId.make("steer-entry-1"),
+            turnId: activeTurnId,
+            messageId,
+            text: "steer accepted",
+            createdAt: "2026-03-29T00:01:00.000Z",
+          },
+        ],
+        activities: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears steer local dispatch when fallback reflects the message as a queued turn", () => {
+    const messageId = MessageId.make("message-steer-fallback");
+    const activeTurnId = TurnId.make("turn-2");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+        },
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "steer",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [
+          {
+            queueItemId: TurnQueueItemId.make("queue-item-steer-fallback"),
+            request: {
+              message: {
+                messageId,
+                role: "user",
+                text: "fallback to queue",
+                attachments: [],
+              },
+            },
+            status: "pending",
+            failureReason: null,
+            createdAt: "2026-03-29T00:01:00.000Z",
+            updatedAt: "2026-03-29T00:01:00.000Z",
+          },
+        ],
+        steerEntries: [],
+        activities: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears steer local dispatch when the steer failure activity is reflected on the thread", () => {
+    const messageId = MessageId.make("message-steer-failed");
+    const activeTurnId = TurnId.make("turn-2");
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+        },
+        latestTurn: previousLatestTurn,
+      }),
+      {
+        delivery: "steer",
+        messageId,
+      },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId,
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        messages: [],
+        queuedTurns: [],
+        steerEntries: [],
+        activities: [
+          {
+            id: EventId.make("activity-steer-failed"),
+            turnId: activeTurnId,
+            tone: "error",
+            kind: "turn.steer.failed",
+            summary: "Steer failed",
+            payload: {
+              messageId,
+              reason: "Provider rejected steering.",
+            },
+            createdAt: "2026-03-29T00:01:00.000Z",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -959,6 +1262,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           },
         ],
         queuedTurns: [],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -1009,6 +1314,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
             updatedAt: "2026-03-29T00:01:05.000Z",
           },
         ],
+        steerEntries: [],
+        activities: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,

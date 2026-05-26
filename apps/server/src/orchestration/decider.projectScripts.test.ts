@@ -7,6 +7,8 @@ import {
   ProjectId,
   ThreadId,
   TurnQueueItemId,
+  TurnSteerEntryId,
+  TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -19,6 +21,7 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 function makeQueuedTurnRequest(messageId: MessageId, text: string) {
   return {
@@ -305,6 +308,109 @@ describe("decider project scripts", () => {
         },
       },
     });
+  });
+
+  it("records accepted steer as a steer entry on the active turn", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+    const withThread = await seedThreadReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(withThread, {
+        sequence: 3,
+        eventId: asEventId("evt-session-running"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-session-running"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-session-running"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      }),
+    );
+
+    const requested = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.steer",
+          commandId: CommandId.make("cmd-turn-steer"),
+          threadId,
+          turnId: activeTurnId,
+          message: {
+            messageId: asMessageId("message-steer-1"),
+            role: "user",
+            text: "Use the smaller refactor.",
+            attachments: [],
+          },
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    if (!("type" in requested)) {
+      throw new Error("Expected a single steer requested event.");
+    }
+    expect(requested.type).toBe("thread.turn-steer-requested");
+    if (requested.type !== "thread.turn-steer-requested") {
+      return;
+    }
+    expect(requested.payload).toMatchObject({
+      threadId,
+      turnId: activeTurnId,
+      messageId: asMessageId("message-steer-1"),
+      text: "Use the smaller refactor.",
+      createdAt: now,
+    });
+
+    const projected = await Effect.runPromise(
+      projectEvent(readModel, {
+        sequence: 4,
+        eventId: asEventId("evt-steer-accepted"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.turn-steer-accepted",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-turn-steer-accept"),
+        causationEventId: requested.eventId,
+        correlationId: CommandId.make("cmd-turn-steer"),
+        metadata: {},
+        payload: {
+          threadId,
+          steerEntryId: TurnSteerEntryId.make("steer-entry-1"),
+          turnId: activeTurnId,
+          messageId: asMessageId("message-steer-1"),
+          text: "Use the smaller refactor.",
+          createdAt: now,
+        },
+      }),
+    );
+    const thread = projected.threads.find((entry) => entry.id === threadId);
+
+    expect(thread?.messages).toEqual([]);
+    expect(thread?.steerEntries).toEqual([
+      {
+        steerEntryId: TurnSteerEntryId.make("steer-entry-1"),
+        turnId: activeTurnId,
+        messageId: asMessageId("message-steer-1"),
+        text: "Use the smaller refactor.",
+        createdAt: now,
+      },
+    ]);
   });
 
   it("rejects normal queued send start while another queued turn is sending", async () => {

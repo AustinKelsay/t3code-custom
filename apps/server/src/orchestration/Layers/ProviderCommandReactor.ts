@@ -5,11 +5,13 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
+  ProviderInstanceId,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  TurnSteerEntryId,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -49,6 +51,7 @@ type ProviderIntentEvent = Extract<
     type:
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
+      | "thread.turn-steer-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
@@ -86,6 +89,9 @@ const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 const effectServerCommandId = (tag: string) =>
   Effect.map(Random.nextUUIDv4, (id) => CommandId.make(`server:${tag}:${id}`));
+const effectSteerEntryId = Effect.map(Random.nextUUIDv4, (id) =>
+  TurnSteerEntryId.make(`steer-entry:${id}`),
+);
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
@@ -861,6 +867,91 @@ const make = Effect.gen(function* () {
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });
 
+  const processTurnSteerRequested = Effect.fn("processTurnSteerRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-steer-requested" }>,
+  ) {
+    const dispatchSteerFallbackToQueue = Effect.fnUntraced(function* (reason: string) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.steer.fallback-to-queue",
+        commandId: yield* effectServerCommandId("turn-steer-fallback-to-queue"),
+        threadId: event.payload.threadId,
+        turnId: event.payload.turnId,
+        message: {
+          messageId: event.payload.messageId,
+          role: "user",
+          text: event.payload.text,
+          attachments: [],
+        },
+        reason,
+        createdAt: event.payload.createdAt,
+      });
+    });
+
+    const dispatchSteerFailure = Effect.fnUntraced(function* (reason: string) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.steer.fail",
+        commandId: yield* effectServerCommandId("turn-steer-failed"),
+        threadId: event.payload.threadId,
+        turnId: event.payload.turnId,
+        messageId: event.payload.messageId,
+        reason,
+        createdAt: event.payload.createdAt,
+      });
+    });
+
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    if (
+      thread.session?.status !== "running" ||
+      thread.session.activeTurnId !== event.payload.turnId
+    ) {
+      return yield* dispatchSteerFallbackToQueue("No active provider turn is available to steer.");
+    }
+
+    if (!thread.session.providerName) {
+      return yield* dispatchSteerFallbackToQueue(
+        "No provider is bound to the active turn for native steering.",
+      );
+    }
+
+    const capabilities = yield* providerService.getCapabilities(
+      thread.session.providerInstanceId ?? ProviderInstanceId.make(thread.session.providerName),
+    );
+    if (capabilities.turnSteering !== "native") {
+      return yield* dispatchSteerFallbackToQueue(
+        `Provider '${thread.session.providerName}' does not support native turn steering.`,
+      );
+    }
+
+    const result = yield* providerService
+      .steerTurn({
+        threadId: event.payload.threadId,
+        expectedTurnId: event.payload.turnId,
+        input: event.payload.text,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          dispatchSteerFailure(formatFailureDetail(cause)).pipe(Effect.as(null)),
+        ),
+      );
+    if (result === null) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.steer.accept",
+      commandId: yield* effectServerCommandId("turn-steer-accepted"),
+      threadId: event.payload.threadId,
+      steerEntryId: yield* effectSteerEntryId,
+      turnId: result.turnId,
+      messageId: event.payload.messageId,
+      text: event.payload.text,
+      createdAt: event.payload.createdAt,
+    });
+  });
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -1008,6 +1099,9 @@ const make = Effect.gen(function* () {
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
+      case "thread.turn-steer-requested":
+        yield* processTurnSteerRequested(event);
+        return;
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
@@ -1043,6 +1137,7 @@ const make = Effect.gen(function* () {
       if (
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
+        event.type === "thread.turn-steer-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||

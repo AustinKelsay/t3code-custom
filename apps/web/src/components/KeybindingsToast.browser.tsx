@@ -183,6 +183,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           },
         ],
         queuedTurns: [],
+        steerEntries: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],

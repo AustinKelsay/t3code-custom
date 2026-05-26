@@ -6,6 +6,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationQueuedTurn,
+  OrchestrationSteerEntry,
   OrchestrationProposedPlan,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
@@ -75,6 +76,8 @@ export interface EnvironmentState {
   messageByThreadId: Record<ThreadId, Record<MessageId, ChatMessage>>;
   queuedTurnIdsByThreadId: Record<ThreadId, TurnQueueItemId[]>;
   queuedTurnByThreadId: Record<ThreadId, Record<TurnQueueItemId, OrchestrationQueuedTurn>>;
+  steerEntryIdsByThreadId?: Record<ThreadId, string[]>;
+  steerEntryByThreadId?: Record<ThreadId, Record<string, OrchestrationSteerEntry>>;
   activityIdsByThreadId: Record<ThreadId, string[]>;
   activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>>;
   proposedPlanIdsByThreadId: Record<ThreadId, string[]>;
@@ -111,6 +114,8 @@ const initialEnvironmentState: EnvironmentState = {
   messageByThreadId: {},
   queuedTurnIdsByThreadId: {},
   queuedTurnByThreadId: {},
+  steerEntryIdsByThreadId: {},
+  steerEntryByThreadId: {},
   activityIdsByThreadId: {},
   activityByThreadId: {},
   proposedPlanIdsByThreadId: {},
@@ -249,6 +254,13 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map((message) => mapMessage(environmentId, message)),
     queuedTurns: thread.queuedTurns.map((queuedTurn) => ({ ...queuedTurn })),
+    steerEntries: (thread.steerEntries ?? []).map((steerEntry) => ({
+      steerEntryId: steerEntry.steerEntryId,
+      turnId: steerEntry.turnId,
+      messageId: steerEntry.messageId,
+      text: steerEntry.text,
+      createdAt: steerEntry.createdAt,
+    })),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
@@ -272,6 +284,20 @@ function buildQueuedTurnSlice(thread: Thread): {
     byId: Object.fromEntries(
       thread.queuedTurns.map((queuedTurn) => [queuedTurn.queueItemId, queuedTurn]),
     ) as Record<TurnQueueItemId, OrchestrationQueuedTurn>,
+  };
+}
+
+function buildSteerEntrySlice(thread: Thread): {
+  ids: string[];
+  byId: Record<string, OrchestrationSteerEntry>;
+} {
+  return {
+    ids: (thread.steerEntries ?? []).map((steerEntry) => steerEntry.steerEntryId),
+    byId: Object.fromEntries(
+      (thread.steerEntries ?? []).map(
+        (steerEntry) => [steerEntry.steerEntryId, steerEntry] as const,
+      ),
+    ) as Record<string, OrchestrationSteerEntry>,
   };
 }
 
@@ -666,6 +692,21 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.steerEntries !== nextThread.steerEntries) {
+    const nextSteerEntrySlice = buildSteerEntrySlice(nextThread);
+    nextState = {
+      ...nextState,
+      steerEntryIdsByThreadId: {
+        ...nextState.steerEntryIdsByThreadId,
+        [nextThread.id]: nextSteerEntrySlice.ids,
+      },
+      steerEntryByThreadId: {
+        ...nextState.steerEntryByThreadId,
+        [nextThread.id]: nextSteerEntrySlice.byId,
+      },
+    };
+  }
+
   if (previousThread?.activities !== nextThread.activities) {
     const nextActivitySlice = buildActivitySlice(nextThread);
     nextState = {
@@ -834,6 +875,10 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedQueuedTurnIds, ...queuedTurnIdsByThreadId } =
     state.queuedTurnIdsByThreadId;
   const { [threadId]: _removedQueuedTurns, ...queuedTurnByThreadId } = state.queuedTurnByThreadId;
+  const { [threadId]: _removedSteerEntryIds, ...steerEntryIdsByThreadId } =
+    state.steerEntryIdsByThreadId ?? {};
+  const { [threadId]: _removedSteerEntries, ...steerEntryByThreadId } =
+    state.steerEntryByThreadId ?? {};
   const { [threadId]: _removedActivityIds, ...activityIdsByThreadId } = state.activityIdsByThreadId;
   const { [threadId]: _removedActivities, ...activityByThreadId } = state.activityByThreadId;
   const { [threadId]: _removedPlanIds, ...proposedPlanIdsByThreadId } =
@@ -856,6 +901,8 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     messageByThreadId,
     queuedTurnIdsByThreadId,
     queuedTurnByThreadId,
+    steerEntryIdsByThreadId,
+    steerEntryByThreadId,
     activityIdsByThreadId,
     activityByThreadId,
     proposedPlanIdsByThreadId,
@@ -1134,6 +1181,11 @@ function syncEnvironmentShellSnapshot(
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
     queuedTurnIdsByThreadId: retainThreadScopedRecord(state.queuedTurnIdsByThreadId, nextThreadIds),
     queuedTurnByThreadId: retainThreadScopedRecord(state.queuedTurnByThreadId, nextThreadIds),
+    steerEntryIdsByThreadId: retainThreadScopedRecord(
+      state.steerEntryIdsByThreadId ?? {},
+      nextThreadIds,
+    ),
+    steerEntryByThreadId: retainThreadScopedRecord(state.steerEntryByThreadId ?? {}, nextThreadIds),
     activityIdsByThreadId: retainThreadScopedRecord(state.activityIdsByThreadId, nextThreadIds),
     activityByThreadId: retainThreadScopedRecord(state.activityByThreadId, nextThreadIds),
     proposedPlanIdsByThreadId: retainThreadScopedRecord(
@@ -1307,6 +1359,7 @@ function applyEnvironmentOrchestrationEvent(
           deletedAt: null,
           messages: [],
           queuedTurns: [],
+          steerEntries: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -1379,9 +1432,28 @@ function applyEnvironmentOrchestrationEvent(
     case "thread.queued-turn-send-failed":
     case "thread.queued-turn-requeued":
     case "thread.queued-turn-resolved":
+    case "thread.queued-turn-removed":
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, event),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-steer-accepted":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        steerEntries: [
+          ...(thread.steerEntries ?? []).filter(
+            (steerEntry) => steerEntry.steerEntryId !== event.payload.steerEntryId,
+          ),
+          {
+            steerEntryId: event.payload.steerEntryId,
+            turnId: event.payload.turnId,
+            messageId: event.payload.messageId,
+            text: event.payload.text,
+            createdAt: event.payload.createdAt,
+          },
+        ],
         updatedAt: event.occurredAt,
       }));
 

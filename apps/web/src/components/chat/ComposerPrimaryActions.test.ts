@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  getRunningFollowUpAlternateAction,
+  formatPendingPrimaryActionLabel,
+  formatRunningFollowUpActionLabel,
+} from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +93,34 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("formatRunningFollowUpActionLabel", () => {
+  it("labels running follow-ups from the effective Queue or Steer behavior", () => {
+    expect(formatRunningFollowUpActionLabel({ behavior: "queue", isBusy: false })).toBe("Queue");
+    expect(formatRunningFollowUpActionLabel({ behavior: "steer", isBusy: false })).toBe("Steer");
+  });
+
+  it("keeps the busy label aligned with the effective behavior", () => {
+    expect(formatRunningFollowUpActionLabel({ behavior: "queue", isBusy: true })).toBe(
+      "Queueing...",
+    );
+    expect(formatRunningFollowUpActionLabel({ behavior: "steer", isBusy: true })).toBe(
+      "Steering...",
+    );
+  });
+});
+
+describe("getRunningFollowUpAlternateAction", () => {
+  it("offers the opposite one-shot running follow-up behavior", () => {
+    expect(getRunningFollowUpAlternateAction("queue")).toEqual({
+      behavior: "steer",
+      label: "Steer this turn",
+    });
+    expect(getRunningFollowUpAlternateAction("steer")).toEqual({
+      behavior: "queue",
+      label: "Queue instead",
+    });
   });
 });

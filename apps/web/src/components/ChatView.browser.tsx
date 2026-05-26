@@ -181,6 +181,7 @@ function createBaseServerConfig(): ServerConfig {
         status: "ready",
         auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
+        capabilities: { turnSteering: "native" },
         models: [],
         slashCommands: [],
         skills: [],
@@ -291,6 +292,7 @@ function createSnapshotForTargetUser(options: {
   targetText: string;
   targetAttachmentCount?: number;
   sessionStatus?: OrchestrationSessionStatus;
+  activeTurnId?: TurnId | null;
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
@@ -364,6 +366,7 @@ function createSnapshotForTargetUser(options: {
         deletedAt: null,
         messages,
         queuedTurns: [],
+        steerEntries: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -372,7 +375,7 @@ function createSnapshotForTargetUser(options: {
           status: options.sessionStatus ?? "ready",
           providerName: "codex",
           runtimeMode: "full-access",
-          activeTurnId: null,
+          activeTurnId: options.activeTurnId ?? null,
           lastError: null,
           updatedAt: NOW_ISO,
         },
@@ -430,6 +433,7 @@ function addThreadToSnapshot(
         deletedAt: null,
         messages: [],
         queuedTurns: [],
+        steerEntries: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -765,6 +769,7 @@ function createSnapshotWithSecondaryProject(options?: {
           deletedAt: null,
           messages: [],
           queuedTurns: [],
+          steerEntries: [],
           activities: [],
           proposedPlans: [],
           checkpoints: [],
@@ -798,6 +803,7 @@ function createSnapshotWithSecondaryProject(options?: {
           deletedAt: null,
           messages: [],
           queuedTurns: [],
+          steerEntries: [],
           activities: [],
           proposedPlans: [],
           checkpoints: [],
@@ -1773,7 +1779,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-mobile-version-banner" as MessageId,
         targetText: "mobile version banner",
       }),
-      configureFixture: (nextFixture) => {
+      configureFixture: () => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           environment: {
@@ -1857,7 +1863,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
-      configureFixture: (nextFixture) => {
+      configureFixture: () => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           availableEditors: ["vscode"],
@@ -3737,6 +3743,79 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows Steer as the running follow-up action when the active provider supports steering", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-steer-label" as MessageId,
+        targetText: "running steer label target",
+        sessionStatus: "running",
+        activeTurnId: "turn-running-steer-label" as TurnId,
+      }),
+      configureFixture: () => {
+        localStorage.setItem(
+          "t3code:client-settings:v1",
+          JSON.stringify({
+            ...DEFAULT_CLIENT_SETTINGS,
+            followUpBehavior: "steer",
+          }),
+        );
+      },
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("guide this active turn");
+      await waitForButtonByText("Steer");
+
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Running follow-up actions"]')
+        ?.click();
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Queue instead");
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to Queue in the running composer when provider steering is unsupported", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-unsupported-label" as MessageId,
+        targetText: "running unsupported label target",
+        sessionStatus: "running",
+        activeTurnId: "turn-running-unsupported-label" as TurnId,
+      }),
+      configureFixture: (nextFixture) => {
+        localStorage.setItem(
+          "t3code:client-settings:v1",
+          JSON.stringify({
+            ...DEFAULT_CLIENT_SETTINGS,
+            followUpBehavior: "steer",
+          }),
+        );
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: nextFixture.serverConfig.providers.map((provider) => ({
+            ...provider,
+            capabilities: { turnSteering: "unsupported" },
+          })),
+        };
+      },
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("queue this instead");
+      await waitForButtonByText("Queue");
     } finally {
       await mounted.cleanup();
     }

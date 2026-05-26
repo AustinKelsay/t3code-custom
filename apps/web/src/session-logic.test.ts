@@ -893,6 +893,73 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("shows accepted Steer entries as same-turn guidance in the work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "steer-accepted",
+        kind: "turn.steer.accepted",
+        summary: "Steer accepted",
+        tone: "info",
+        payload: {
+          messageId: "message-steer-1",
+          text: "Please keep the refactor narrow.",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      label: "Steer accepted",
+      detail: "Please keep the refactor narrow.",
+      tone: "info",
+    });
+  });
+
+  it("shows Steer fallback reasons when the input becomes queued", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "steer-fallback",
+        kind: "turn.steer.fallback-queued",
+        summary: "Steer queued",
+        tone: "info",
+        payload: {
+          messageId: "message-steer-fallback",
+          queueItemId: "queue-item-1",
+          reason: "Active turn finished before steering was accepted.",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      label: "Steer queued",
+      detail: "Active turn finished before steering was accepted.",
+      tone: "info",
+    });
+  });
+
+  it("shows failed Steer reasons as error work log detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "steer-failed",
+        kind: "turn.steer.failed",
+        summary: "Steer failed",
+        tone: "error",
+        payload: {
+          messageId: "message-steer-failed",
+          reason: "Codex app-server rejected turn/steer.",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      label: "Steer failed",
+      detail: "Codex app-server rejected turn/steer.",
+      tone: "error",
+    });
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
