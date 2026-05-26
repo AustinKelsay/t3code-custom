@@ -3,8 +3,10 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "@t3tools/contracts";
+import { TurnQueueItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
@@ -19,6 +21,10 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+const newTurnQueueItemId = Effect.map(Random.nextUUIDv4, (id) =>
+  TurnQueueItemId.make(`queue-item:${id}`),
+);
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -371,6 +377,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          attachments: command.message.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -395,26 +421,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
         });
       }
-      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        }),
-        type: "thread.message-sent",
-        payload: {
-          threadId: command.threadId,
-          messageId: command.message.messageId,
-          role: "user",
-          text: command.message.text,
-          attachments: command.message.attachments,
-          turnId: null,
-          streaming: false,
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
-        },
-      };
       const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -438,6 +444,282 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.queue": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          attachments: command.message.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnQueuedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-queued",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: yield* newTurnQueueItemId,
+          request: {
+            message: command.message,
+          },
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, turnQueuedEvent];
+    }
+
+    case "thread.queued-turn.retry": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find(
+        (entry) => entry.queueItemId === command.queueItemId,
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      if (queuedTurn.status !== "failed") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' is not failed and cannot be retried.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-requeued",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.remove": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find(
+        (entry) => entry.queueItemId === command.queueItemId,
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      if (queuedTurn.status === "sending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' is sending and cannot be removed.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-removed",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.send.start": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find((entry) =>
+        command.mode === "recover" ? entry.status === "sending" : entry.status === "pending",
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no ${command.mode === "recover" ? "recoverable sending" : "pending"} queued turn to send.`,
+        });
+      }
+      if (
+        command.mode === "normal" &&
+        thread.queuedTurns.some((entry) => entry.status === "sending")
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already has a queued turn being sent.`,
+        });
+      }
+      if (thread.session?.status !== "ready") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not ready to send a queued turn.`,
+        });
+      }
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: queuedTurn.request.message.messageId,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          queueItemId: queuedTurn.queueItemId,
+          queuedRequest: queuedTurn.request,
+          createdAt: command.createdAt,
+        },
+      };
+      if (command.mode === "recover") {
+        return turnStartRequestedEvent;
+      }
+      const queuedTurnSendStartedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-send-started",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          createdAt: command.createdAt,
+        },
+      };
+      return [
+        queuedTurnSendStartedEvent,
+        {
+          ...turnStartRequestedEvent,
+          causationEventId: queuedTurnSendStartedEvent.eventId,
+        },
+      ];
+    }
+
+    case "thread.queued-turn.send.fail": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find(
+        (entry) => entry.queueItemId === command.queueItemId,
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      if (queuedTurn.status !== "sending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' is not sending and cannot fail.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-send-failed",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          reason: command.reason,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.resolve": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurn = thread.queuedTurns.find(
+        (entry) => entry.queueItemId === command.queueItemId,
+      );
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      if (queuedTurn.status !== "sending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.queueItemId}' is not sending and cannot resolve.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-resolved",
+        payload: {
+          threadId: command.threadId,
+          queueItemId: queuedTurn.queueItemId,
+          messageId: queuedTurn.request.message.messageId,
+          turnId: command.turnId,
+          createdAt: command.createdAt,
+        },
+      };
     }
 
     case "thread.turn.interrupt": {

@@ -1603,9 +1603,18 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        turnSteering: "unsupported",
       },
       startSession,
       sendTurn,
+      steerTurn: (_input) =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "turn/steer",
+            detail: "OpenCode does not support native turn steering.",
+          }),
+        ),
       interruptTurn,
       respondToRequest,
       respondToUserInput,

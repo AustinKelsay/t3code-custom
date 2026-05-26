@@ -1,5 +1,7 @@
 import {
+  type FollowUpBehavior,
   type EnvironmentId,
+  type MessageId,
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
@@ -24,6 +26,48 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export type ProviderTurnSteeringSupport = "native" | "unsupported";
+export type FollowUpBehaviorOverride = FollowUpBehavior | null | undefined;
+
+export type EffectiveFollowUpBehavior =
+  | {
+      readonly behavior: "queue";
+      readonly requestedBehavior: FollowUpBehavior;
+      readonly fallbackReason:
+        | "inactive-turn"
+        | "unsupported-provider"
+        | "non-steerable-payload"
+        | null;
+    }
+  | {
+      readonly behavior: "steer";
+      readonly requestedBehavior: "steer";
+      readonly fallbackReason: null;
+    };
+
+export function resolveFollowUpBehavior(input: {
+  readonly setting: FollowUpBehavior;
+  readonly override?: FollowUpBehaviorOverride;
+  readonly activeTurnState: "active" | "inactive";
+  readonly providerTurnSteering: ProviderTurnSteeringSupport;
+  readonly attachmentCount: number;
+}): EffectiveFollowUpBehavior {
+  const requestedBehavior = input.override ?? input.setting;
+  if (requestedBehavior === "queue") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: null };
+  }
+  if (input.activeTurnState !== "active") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "inactive-turn" };
+  }
+  if (input.providerTurnSteering !== "native") {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "unsupported-provider" };
+  }
+  if (input.attachmentCount > 0) {
+    return { behavior: "queue", requestedBehavior, fallbackReason: "non-steerable-payload" };
+  }
+  return { behavior: "steer", requestedBehavior: "steer", fallbackReason: null };
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
@@ -41,6 +85,7 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    queuedTurns: [],
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,
@@ -309,6 +354,8 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
+  delivery: "queue" | "steer";
+  messageId: MessageId | null;
   latestTurnTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
@@ -319,13 +366,19 @@ export interface LocalDispatchSnapshot {
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: {
+    preparingWorktree?: boolean;
+    delivery?: "queue" | "steer";
+    messageId?: MessageId;
+  },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
+    delivery: options?.delivery ?? "steer",
+    messageId: options?.messageId ?? null,
     latestTurnTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
@@ -340,6 +393,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   session: Thread["session"] | null;
+  messages: Thread["messages"];
+  queuedTurns: Thread["queuedTurns"];
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -353,6 +408,17 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
+
+  if (input.localDispatch.delivery === "queue" && input.localDispatch.messageId !== null) {
+    const messageId = input.localDispatch.messageId;
+    // Queue-mode dispatch is acknowledged once the server durably reflects the
+    // message into thread state, not when a later turn eventually starts.
+    return (
+      input.messages.some((message) => message.id === messageId && message.role === "user") ||
+      input.queuedTurns.some((queuedTurn) => queuedTurn.request.message.messageId === messageId)
+    );
+  }
+
   const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||

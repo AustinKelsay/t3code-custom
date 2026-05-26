@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  TurnQueueItemId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
@@ -74,6 +75,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
+    queuedTurns: [],
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -149,6 +151,14 @@ function makeState(thread: Thread): AppState {
         thread.messages.map((message) => [message.id, message] as const),
       ) as EnvironmentState["messageByThreadId"][ThreadId],
     },
+    queuedTurnIdsByThreadId: {
+      [thread.id]: thread.queuedTurns.map((queuedTurn) => queuedTurn.queueItemId),
+    },
+    queuedTurnByThreadId: {
+      [thread.id]: Object.fromEntries(
+        thread.queuedTurns.map((queuedTurn) => [queuedTurn.queueItemId, queuedTurn] as const),
+      ) as EnvironmentState["queuedTurnByThreadId"][ThreadId],
+    },
     activityIdsByThreadId: {
       [thread.id]: thread.activities.map((activity) => activity.id),
     },
@@ -192,6 +202,8 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
     threadTurnStateById: {},
     messageIdsByThreadId: {},
     messageByThreadId: {},
+    queuedTurnIdsByThreadId: {},
+    queuedTurnByThreadId: {},
     activityIdsByThreadId: {},
     activityByThreadId: {},
     proposedPlanIdsByThreadId: {},
@@ -726,6 +738,112 @@ describe("incremental orchestration updates", () => {
     );
   });
 
+  it("tracks queued turn lifecycle events on the thread detail slice", () => {
+    const thread = makeThread();
+    const queueItemId = TurnQueueItemId.make("queue-item-1");
+    const messageId = MessageId.make("message-queued-1");
+    const queued = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.turn-queued", {
+        threadId: thread.id,
+        queueItemId,
+        request: {
+          message: {
+            messageId,
+            role: "user",
+            text: "queued follow-up",
+            attachments: [],
+          },
+        },
+        createdAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(queued)[0]?.queuedTurns).toEqual([
+      {
+        queueItemId,
+        request: {
+          message: {
+            messageId,
+            role: "user",
+            text: "queued follow-up",
+            attachments: [],
+          },
+        },
+        status: "pending",
+        failureReason: null,
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      },
+    ]);
+
+    const sending = applyOrchestrationEvent(
+      queued,
+      makeEvent("thread.queued-turn-send-started", {
+        threadId: thread.id,
+        queueItemId,
+        messageId,
+        createdAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(sending)[0]?.queuedTurns[0]).toMatchObject({
+      queueItemId,
+      status: "sending",
+      failureReason: null,
+      updatedAt: "2026-02-27T00:00:02.000Z",
+    });
+
+    const failed = applyOrchestrationEvent(
+      sending,
+      makeEvent("thread.queued-turn-send-failed", {
+        threadId: thread.id,
+        queueItemId,
+        messageId,
+        reason: "Provider send failed.",
+        createdAt: "2026-02-27T00:00:03.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(failed)[0]?.queuedTurns[0]).toMatchObject({
+      queueItemId,
+      status: "failed",
+      failureReason: "Provider send failed.",
+      updatedAt: "2026-02-27T00:00:03.000Z",
+    });
+
+    const requeued = applyOrchestrationEvent(
+      failed,
+      makeEvent("thread.queued-turn-requeued", {
+        threadId: thread.id,
+        queueItemId,
+        messageId,
+        createdAt: "2026-02-27T00:00:04.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(requeued)[0]?.queuedTurns[0]).toMatchObject({
+      queueItemId,
+      status: "pending",
+      failureReason: null,
+      updatedAt: "2026-02-27T00:00:04.000Z",
+    });
+
+    const resolved = applyOrchestrationEvent(
+      requeued,
+      makeEvent("thread.queued-turn-resolved", {
+        threadId: thread.id,
+        queueItemId,
+        messageId,
+        turnId: TurnId.make("turn-queued-1"),
+        createdAt: "2026-02-27T00:00:05.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(resolved)[0]?.queuedTurns).toEqual([]);
+  });
+
   it("applies replay batches in sequence and updates session state", () => {
     const thread = makeThread({
       latestTurn: {
@@ -953,6 +1071,23 @@ describe("incremental orchestration updates", () => {
             files: [],
           },
         ],
+        queuedTurns: [
+          {
+            queueItemId: TurnQueueItemId.make("queue-item-revert"),
+            request: {
+              message: {
+                messageId: MessageId.make("queued-message-revert"),
+                role: "user",
+                text: "queued follow-up after revert",
+                attachments: [],
+              },
+            },
+            status: "pending",
+            failureReason: null,
+            createdAt: "2026-02-27T00:00:04.000Z",
+            updatedAt: "2026-02-27T00:00:04.000Z",
+          },
+        ],
       }),
     );
 
@@ -975,6 +1110,18 @@ describe("incremental orchestration updates", () => {
     ]);
     expect(threadsOf(next)[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
       TurnId.make("turn-1"),
+    ]);
+    expect(threadsOf(next)[0]?.queuedTurns).toMatchObject([
+      {
+        queueItemId: TurnQueueItemId.make("queue-item-revert"),
+        request: {
+          message: {
+            messageId: MessageId.make("queued-message-revert"),
+            text: "queued follow-up after revert",
+          },
+        },
+        status: "pending",
+      },
     ]);
   });
 

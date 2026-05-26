@@ -90,6 +90,10 @@
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
+    },
+    "./orchestrationQueue": {
+      "types": "./src/orchestrationQueue.ts",
+      "import": "./src/orchestrationQueue.ts"
     }
   },
   "scripts": {

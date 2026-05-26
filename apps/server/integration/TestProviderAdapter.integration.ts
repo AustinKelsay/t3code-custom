@@ -475,13 +475,24 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessions.clear();
       });
 
+    const steerTurn: ProviderAdapterShape<ProviderAdapterError>["steerTurn"] = () =>
+      Effect.fail(
+        new ProviderAdapterValidationError({
+          provider,
+          operation: "steerTurn",
+          issue: "Test provider adapter does not support turn steering.",
+        }),
+      );
+
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
       capabilities: {
         sessionModelSwitch: "in-session",
+        turnSteering: "unsupported",
       },
       startSession,
       sendTurn,
+      steerTurn,
       interruptTurn,
       respondToRequest,
       respondToUserInput,

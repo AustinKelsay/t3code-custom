@@ -358,7 +358,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       };
 
       const dispatchBootstrapTurnStart = (
-        command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
+        command: Extract<OrchestrationCommand, { type: "thread.turn.start" }> &
+          Readonly<{
+            bootstrap: NonNullable<
+              Extract<OrchestrationCommand, { type: "thread.turn.start" }>["bootstrap"]
+            >;
+          }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
         Effect.gen(function* () {
           const bootstrap = command.bootstrap;
@@ -552,7 +557,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
+            ? dispatchBootstrapTurnStart({
+                ...normalizedCommand,
+                bootstrap: normalizedCommand.bootstrap,
+              })
             : orchestrationEngine
                 .dispatch(normalizedCommand)
                 .pipe(

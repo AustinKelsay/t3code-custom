@@ -29,9 +29,10 @@ const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: CODEX_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: { sessionModelSwitch: "in-session", turnSteering: "native" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
+  steerTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
@@ -46,9 +47,10 @@ const fakeCodexAdapter: CodexAdapterShape = {
 
 const fakeClaudeAdapter: ClaudeAdapterShape = {
   provider: CLAUDE_AGENT_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: { sessionModelSwitch: "in-session", turnSteering: "unsupported" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
+  steerTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
@@ -63,9 +65,10 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
 
 const fakeOpenCodeAdapter: OpenCodeAdapterShape = {
   provider: OPENCODE_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: { sessionModelSwitch: "in-session", turnSteering: "unsupported" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
+  steerTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
@@ -80,9 +83,10 @@ const fakeOpenCodeAdapter: OpenCodeAdapterShape = {
 
 const fakeCursorAdapter: CursorAdapterShape = {
   provider: CURSOR_DRIVER,
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: { sessionModelSwitch: "in-session", turnSteering: "unsupported" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
+  steerTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),

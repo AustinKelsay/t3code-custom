@@ -3276,9 +3276,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteering: "unsupported",
     },
     startSession,
     sendTurn,
+    steerTurn: (input) =>
+      Effect.fail(
+        toRequestError(
+          input.threadId,
+          "turn/steer",
+          new Error("Claude does not support native turn steering."),
+        ),
+      ),
     interruptTurn,
     readThread,
     rollbackThread,

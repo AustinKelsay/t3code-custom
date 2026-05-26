@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -83,6 +84,8 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const effectServerCommandId = (tag: string) =>
+  Effect.map(Random.nextUUIDv4, (id) => CommandId.make(`server:${tag}:${id}`));
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
@@ -686,18 +689,63 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
-    if (!message || message.role !== "user") {
+    const dispatchQueuedTurnFailure = (detail: string, tag: string) => {
+      const queueItemId = event.payload.queueItemId;
+      if (queueItemId === undefined) {
+        return Effect.void;
+      }
+      return effectServerCommandId(tag).pipe(
+        Effect.flatMap((commandId) =>
+          orchestrationEngine.dispatch({
+            type: "thread.queued-turn.send.fail",
+            commandId,
+            threadId: event.payload.threadId,
+            queueItemId,
+            reason: detail,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+    };
+
+    const queuedRequest =
+      event.payload.queuedRequest ??
+      (event.payload.queueItemId === undefined
+        ? undefined
+        : thread.queuedTurns.find((entry) => entry.queueItemId === event.payload.queueItemId)
+            ?.request);
+    if (event.payload.queueItemId !== undefined && queuedRequest === undefined) {
+      const detail = `Queued turn '${event.payload.queueItemId}' was not found for turn start request.`;
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.start.failed",
         summary: "Provider turn start failed",
-        detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
+        detail,
         turnId: null,
         createdAt: event.payload.createdAt,
       });
+      yield* dispatchQueuedTurnFailure(detail, "queued-turn-send-missing-request");
       return;
     }
+    const message =
+      queuedRequest?.message ??
+      thread.messages.find(
+        (entry) => entry.id === event.payload.messageId && entry.role === "user",
+      );
+    if (!message) {
+      const detail = `User message '${event.payload.messageId}' was not found for turn start request.`;
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      yield* dispatchQueuedTurnFailure(detail, "queued-turn-send-missing-message");
+      return;
+    }
+    const messageAttachments = message.attachments ?? [];
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
@@ -710,7 +758,7 @@ const make = Effect.gen(function* () {
         }) ?? process.cwd();
       const generationInput = {
         messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
@@ -750,6 +798,7 @@ const make = Effect.gen(function* () {
             createdAt: event.payload.createdAt,
           }),
         ),
+        Effect.flatMap(() => dispatchQueuedTurnFailure(detail, "queued-turn-send-failed")),
         Effect.asVoid,
       );
     };
@@ -769,7 +818,7 @@ const make = Effect.gen(function* () {
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),

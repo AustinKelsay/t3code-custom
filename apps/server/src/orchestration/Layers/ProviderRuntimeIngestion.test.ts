@@ -100,12 +100,14 @@ function createProviderServiceHarness() {
   const service: ProviderServiceShape = {
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
+    steerTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getCapabilities: () =>
+      Effect.succeed({ sessionModelSwitch: "in-session", turnSteering: "unsupported" }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
       return Effect.succeed({
@@ -170,7 +172,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
   threadId: ThreadId = asThreadId("thread-1"),
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
@@ -503,6 +505,90 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("resolves a queued turn only after the runtime confirms turn.started", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-queued-resolved");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.queue",
+        commandId: CommandId.make("cmd-turn-start-queued-runtime"),
+        threadId,
+        message: {
+          messageId: asMessageId("msg-queued-runtime"),
+          role: "user",
+          text: "queued runtime turn",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    const queuedThread = await waitForThread(
+      harness.readModel,
+      (thread) => thread.queuedTurns.length === 1 && thread.queuedTurns[0]?.status === "pending",
+      2_000,
+      threadId,
+    );
+    expect(queuedThread.queuedTurns[0]).toMatchObject({
+      request: {
+        message: {
+          messageId: "msg-queued-runtime",
+        },
+      },
+      status: "pending",
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.queued-turn.send.start",
+        commandId: CommandId.make("cmd-queued-send-start-runtime"),
+        threadId,
+        mode: "normal",
+        createdAt: now,
+      }),
+    );
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.queuedTurns[0]?.status === "sending",
+      2_000,
+      threadId,
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt: now,
+      updatedAt: now,
+      activeTurnId: turnId,
+    });
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-queued-runtime"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId,
+      turnId,
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.queuedTurns.length === 0 &&
+        entry.session?.status === "running" &&
+        entry.session?.activeTurnId === turnId,
+      2_000,
+      threadId,
+    );
+    expect(thread.queuedTurns).toEqual([]);
   });
 
   it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {

@@ -1122,9 +1122,17 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", turnSteering: "unsupported" },
       startSession,
       sendTurn,
+      steerTurn: (_input) =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "turn/steer",
+            detail: "Cursor does not support native turn steering.",
+          }),
+        ),
       interruptTurn,
       readThread,
       rollbackThread,
