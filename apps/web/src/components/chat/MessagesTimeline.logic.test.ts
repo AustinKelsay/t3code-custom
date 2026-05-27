@@ -540,3 +540,118 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
   });
 });
+
+describe("steer entries", () => {
+  it("renders a steer entry as a distinct row, not as a user message", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Write a function",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "steer-entry-1",
+          kind: "steer-entry",
+          createdAt: "2026-01-01T00:00:15Z",
+          steerEntryId: "steer-1" as never,
+          turnId: "turn-1" as never,
+          text: "Also add error handling",
+        },
+        {
+          id: "assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant",
+            text: "Done.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const steerRow = rows.find((row) => row.kind === "steer-entry");
+
+    expect(steerRow).toBeDefined();
+    expect(steerRow!.kind).toBe("steer-entry");
+    expect(steerRow!.text).toBe("Also add error handling");
+    expect(steerRow!.turnId).toBe("turn-1");
+    // Steer entries are distinct from user messages — no revert, no attachments
+    expect("revertTurnCount" in steerRow!).toBe(false);
+    expect("message" in steerRow!).toBe(false);
+  });
+
+  it("positions steer entries between the turn user message and the assistant response", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Start task",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "steer-entry-1",
+          kind: "steer-entry",
+          createdAt: "2026-01-01T00:00:10Z",
+          steerEntryId: "steer-1" as never,
+          turnId: "turn-1" as never,
+          text: "Refine approach",
+        },
+        {
+          id: "steer-entry-2",
+          kind: "steer-entry",
+          createdAt: "2026-01-01T00:00:20Z",
+          steerEntryId: "steer-2" as never,
+          turnId: "turn-1" as never,
+          text: "Add logging too",
+        },
+        {
+          id: "assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:30Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant",
+            text: "Done.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const kinds = rows.map((row) => row.kind);
+    expect(kinds).toEqual(["message", "steer-entry", "steer-entry", "message"]);
+  });
+});

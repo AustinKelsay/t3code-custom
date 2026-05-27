@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
+  type OrchestrationSteerEntry,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
@@ -106,6 +107,14 @@ export type TimelineEntry =
       kind: "message";
       createdAt: string;
       message: ChatMessage;
+    }
+  | {
+      id: string;
+      kind: "steer-entry";
+      createdAt: string;
+      steerEntryId: string;
+      turnId: TurnId;
+      text: string;
     }
   | {
       id: string;
@@ -1181,12 +1190,21 @@ export function deriveTimelineEntries(
   messages: ChatMessage[],
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
+  steerEntries: OrchestrationSteerEntry[],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
     kind: "message",
     createdAt: message.createdAt,
     message,
+  }));
+  const steerEntryRows: TimelineEntry[] = steerEntries.map((steerEntry) => ({
+    id: steerEntry.steerEntryId,
+    kind: "steer-entry",
+    createdAt: steerEntry.createdAt,
+    steerEntryId: steerEntry.steerEntryId,
+    turnId: steerEntry.turnId,
+    text: steerEntry.text,
   }));
   const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
     id: proposedPlan.id,
@@ -1200,7 +1218,7 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
+  return [...messageRows, ...steerEntryRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

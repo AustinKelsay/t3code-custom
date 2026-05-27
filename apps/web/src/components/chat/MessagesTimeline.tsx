@@ -21,6 +21,7 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowDownCircle,
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -313,6 +314,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "steer-entry" ? <SteerEntryTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -383,6 +385,28 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </>
           }
         />
+      </div>
+    </div>
+  );
+}
+
+function SteerEntryTimelineRow({
+  row,
+}: {
+  row: Extract<MessagesTimelineRow, { kind: "steer-entry" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="flex justify-start">
+      <div className="relative max-w-[80%] rounded-xl rounded-bl-sm border border-border/60 bg-muted/50 px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <ArrowDownCircle className="shrink-0 text-muted-foreground/60" size={14} />
+          <p className="text-sm text-muted-foreground">{row.text}</p>
+        </div>
+        <p className="mt-1 text-right text-[11px] text-muted-foreground/40">
+          {formatTimestamp(row.createdAt, ctx.timestampFormat)}
+        </p>
       </div>
     </div>
   );

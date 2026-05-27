@@ -33,6 +33,14 @@ export type MessagesTimelineRow =
       revertTurnCount?: number | undefined;
     }
   | {
+      kind: "steer-entry";
+      id: string;
+      createdAt: string;
+      steerEntryId: string;
+      turnId: TurnId;
+      text: string;
+    }
+  | {
       kind: "proposed-plan";
       id: string;
       createdAt: string;
@@ -162,6 +170,18 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "steer-entry") {
+      nextRows.push({
+        kind: "steer-entry",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        steerEntryId: timelineEntry.steerEntryId,
+        turnId: timelineEntry.turnId,
+        text: timelineEntry.text,
+      });
+      continue;
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       input.activeTurnInProgress === true &&
@@ -253,6 +273,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount
       );
+    }
+
+    case "steer-entry": {
+      const bs = b as typeof a;
+      return a.steerEntryId === bs.steerEntryId && a.turnId === bs.turnId && a.text === bs.text;
     }
   }
 }

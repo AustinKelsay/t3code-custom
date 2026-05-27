@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   TurnId,
+  TurnSteerEntryId,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
@@ -1364,6 +1365,7 @@ describe("deriveTimelineEntries", () => {
           tone: "tool",
         },
       ],
+      [],
     );
 
     expect(entries.map((entry) => entry.kind)).toEqual(["message", "proposed-plan", "work"]);
@@ -1397,6 +1399,7 @@ describe("deriveTimelineEntries", () => {
       ],
       [],
       [],
+      [],
     );
 
     expect(
@@ -1406,6 +1409,40 @@ describe("deriveTimelineEntries", () => {
         completedAt: "2026-02-23T00:00:02.000Z",
       }),
     ).toBe("assistant-final");
+  });
+
+  it("includes steer entries sorted chronologically with messages", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("user-1"),
+          role: "user",
+          text: "Write a function",
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-23T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+      [
+        {
+          steerEntryId: TurnSteerEntryId.make("steer-1"),
+          turnId: TurnId.make("turn-1"),
+          messageId: MessageId.make("steer-msg-1"),
+          text: "Also add error handling",
+          createdAt: "2026-02-23T00:00:10.000Z",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["message", "steer-entry"]);
+    expect(entries[1]).toMatchObject({
+      kind: "steer-entry",
+      steerEntryId: "steer-1",
+      turnId: "turn-1",
+      text: "Also add error handling",
+    });
   });
 });
 
