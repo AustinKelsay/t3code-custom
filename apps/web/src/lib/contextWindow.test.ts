@@ -108,13 +108,32 @@ describe("contextWindow", () => {
     expect(snapshot).toBeNull();
   });
 
-  it("returns null when fallback has zero maxTokens", () => {
+  it("synthesizes an estimated snapshot with null maxTokens when usedTokens is valid", () => {
+    const snapshot = deriveLatestContextWindowSnapshot(
+      [makeActivity("activity-1", "tool.started", {})],
+      { maxTokens: null, usedTokens: 50_000 },
+    );
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.usedTokens).toBe(50_000);
+    expect(snapshot?.maxTokens).toBeNull();
+    expect(snapshot?.usedPercentage).toBeNull();
+    expect(snapshot?.remainingTokens).toBeNull();
+    expect(snapshot?.remainingPercentage).toBeNull();
+    expect(snapshot?.source).toBe("estimated");
+  });
+
+  it("synthesizes an estimated snapshot when maxTokens is zero but usedTokens is valid", () => {
     const snapshot = deriveLatestContextWindowSnapshot(
       [makeActivity("activity-1", "tool.started", {})],
       { maxTokens: 0, usedTokens: 50_000 },
     );
 
-    expect(snapshot).toBeNull();
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.usedTokens).toBe(50_000);
+    expect(snapshot?.maxTokens).toBeNull();
+    expect(snapshot?.usedPercentage).toBeNull();
+    expect(snapshot?.source).toBe("estimated");
   });
 
   it("returns null when fallback has zero usedTokens", () => {

@@ -795,10 +795,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Context window
   // ------------------------------------------------------------------
-  const fallbackMaxTokens = useMemo(
-    () => resolveContextWindowLimit(activeThreadModelSelection?.options),
-    [activeThreadModelSelection?.options],
-  );
+  const fallbackMaxTokens = useMemo(() => {
+    const fromThread = resolveContextWindowLimit(activeThreadModelSelection?.options);
+    if (fromThread !== null) {
+      return fromThread;
+    }
+    return resolveContextWindowLimit(selectedModelSelection.options);
+  }, [activeThreadModelSelection?.options, selectedModelSelection.options]);
 
   const fallbackUsedTokens = useMemo(
     () => estimateContentTokens(activeThread?.messages ?? []),

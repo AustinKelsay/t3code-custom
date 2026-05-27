@@ -73,17 +73,19 @@ export function deriveLatestContextWindowSnapshot(
     };
   }
 
-  const fallbackMaxTokens = fallback?.maxTokens ?? null;
+  const fallbackMaxTokens =
+    fallback?.maxTokens != null && fallback.maxTokens > 0 ? fallback.maxTokens : null;
   const fallbackUsedTokens = fallback?.usedTokens ?? null;
-  if (
-    fallbackMaxTokens !== null &&
-    fallbackMaxTokens > 0 &&
-    fallbackUsedTokens !== null &&
-    fallbackUsedTokens > 0
-  ) {
-    const usedPercentage = Math.min(100, (fallbackUsedTokens / fallbackMaxTokens) * 100);
-    const remainingTokens = Math.max(0, Math.round(fallbackMaxTokens - fallbackUsedTokens));
-    const remainingPercentage = Math.max(0, 100 - usedPercentage);
+  if (fallbackUsedTokens !== null && fallbackUsedTokens > 0) {
+    const usedPercentage =
+      fallbackMaxTokens !== null
+        ? Math.min(100, (fallbackUsedTokens / fallbackMaxTokens) * 100)
+        : null;
+    const remainingTokens =
+      fallbackMaxTokens !== null
+        ? Math.max(0, Math.round(fallbackMaxTokens - fallbackUsedTokens))
+        : null;
+    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
 
     return {
       usedTokens: fallbackUsedTokens,
