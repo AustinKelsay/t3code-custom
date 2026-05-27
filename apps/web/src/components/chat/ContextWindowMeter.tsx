@@ -29,7 +29,10 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
         render={
           <button
             type="button"
-            className="group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85"
+            className={cn(
+              "group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85",
+              usage.source === "estimated" && "opacity-60",
+            )}
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -60,13 +63,17 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
                   strokeLinecap="round"
                   strokeDasharray={circumference}
                   strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
+                  className={cn(
+                    "transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none",
+                    usage.source === "estimated" && "opacity-60",
+                  )}
                 />
               </svg>
               <span
                 className={cn(
                   "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium",
                   "text-muted-foreground",
+                  usage.source === "estimated" && "opacity-60",
                 )}
               >
                 {usage.usedPercentage !== null

@@ -23,10 +23,12 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly usedPercentage: number | null;
   readonly remainingPercentage: number | null;
   readonly updatedAt: string;
+  readonly source?: "live" | "estimated";
 };
 
 export function deriveLatestContextWindowSnapshot(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  fallback?: { readonly maxTokens: number | null; readonly usedTokens: number | null },
 ): ContextWindowSnapshot | null {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
@@ -67,6 +69,43 @@ export function deriveLatestContextWindowSnapshot(
       durationMs: asFiniteNumber(payload?.durationMs),
       compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
       updatedAt: activity.createdAt,
+      source: "live",
+    };
+  }
+
+  const fallbackMaxTokens = fallback?.maxTokens ?? null;
+  const fallbackUsedTokens = fallback?.usedTokens ?? null;
+  if (
+    fallbackMaxTokens !== null &&
+    fallbackMaxTokens > 0 &&
+    fallbackUsedTokens !== null &&
+    fallbackUsedTokens > 0
+  ) {
+    const usedPercentage = Math.min(100, (fallbackUsedTokens / fallbackMaxTokens) * 100);
+    const remainingTokens = Math.max(0, Math.round(fallbackMaxTokens - fallbackUsedTokens));
+    const remainingPercentage = Math.max(0, 100 - usedPercentage);
+
+    return {
+      usedTokens: fallbackUsedTokens,
+      totalProcessedTokens: null,
+      maxTokens: fallbackMaxTokens,
+      remainingTokens,
+      usedPercentage,
+      remainingPercentage,
+      inputTokens: null,
+      cachedInputTokens: null,
+      outputTokens: null,
+      reasoningOutputTokens: null,
+      lastUsedTokens: null,
+      lastInputTokens: null,
+      lastCachedInputTokens: null,
+      lastOutputTokens: null,
+      lastReasoningOutputTokens: null,
+      toolUses: null,
+      durationMs: null,
+      compactsAutomatically: true,
+      updatedAt: new Date().toISOString(),
+      source: "estimated",
     };
   }
 

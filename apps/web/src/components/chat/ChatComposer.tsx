@@ -20,6 +20,10 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
+  estimateContentTokens,
+  resolveContextWindowLimit,
+} from "@t3tools/shared/contextWindowEstimation";
+import {
   memo,
   useCallback,
   useEffect,
@@ -791,9 +795,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Context window
   // ------------------------------------------------------------------
+  const fallbackMaxTokens = useMemo(
+    () => resolveContextWindowLimit(activeThreadModelSelection?.options),
+    [activeThreadModelSelection?.options],
+  );
+
+  const fallbackUsedTokens = useMemo(
+    () => estimateContentTokens(activeThread?.messages ?? []),
+    [activeThread?.messages],
+  );
+
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
-    [activeThreadActivities],
+    () =>
+      deriveLatestContextWindowSnapshot(activeThreadActivities ?? [], {
+        maxTokens: fallbackMaxTokens,
+        usedTokens: fallbackUsedTokens,
+      }),
+    [activeThreadActivities, fallbackMaxTokens, fallbackUsedTokens],
   );
 
   // ------------------------------------------------------------------
