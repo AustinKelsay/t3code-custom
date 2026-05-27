@@ -94,8 +94,13 @@ describe("resolveContextWindowLimit", () => {
 });
 
 describe("estimateContentTokens", () => {
-  it("returns the rounded character-count divided by chars-per-token", () => {
+  it("returns the ceiling of character-count divided by chars-per-token", () => {
     expect(estimateContentTokens([{ text: "12345678" }, { text: "abcdefghijkl" }])).toBe(5);
+    expect(estimateContentTokens([{ text: "a" }])).toBe(1);
+    expect(estimateContentTokens([{ text: "ab" }])).toBe(1);
+    expect(estimateContentTokens([{ text: "abc" }])).toBe(1);
+    expect(estimateContentTokens([{ text: "abcd" }])).toBe(1);
+    expect(estimateContentTokens([{ text: "abcde" }])).toBe(2);
   });
 
   it("returns 0 for empty segments", () => {
@@ -103,7 +108,7 @@ describe("estimateContentTokens", () => {
   });
 
   it("handles segments with empty text", () => {
-    expect(estimateContentTokens([{ text: "" }, { text: "hello" }])).toBe(1);
+    expect(estimateContentTokens([{ text: "" }, { text: "hello" }])).toBe(2);
   });
 
   it("treats missing or non-string text as zero-length", () => {

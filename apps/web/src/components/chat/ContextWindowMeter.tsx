@@ -15,10 +15,22 @@ function formatPercentage(value: number | null): string | null {
 export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
   const { usage } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
-  const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
+  const isEstimatedNoCapacity =
+    usage.source === "estimated" && usage.maxTokens === null && usage.usedTokens > 0;
+  const normalizedPercentage = isEstimatedNoCapacity
+    ? 25
+    : Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
+
+  const badgeText = (() => {
+    if (usage.usedPercentage !== null) {
+      return `${Math.round(usage.usedPercentage)}`;
+    }
+    const tokens = formatContextWindowTokens(usage.usedTokens);
+    return usage.source === "estimated" ? `~${tokens}` : tokens;
+  })();
 
   return (
     <Popover>
@@ -29,10 +41,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
         render={
           <button
             type="button"
-            className={cn(
-              "group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85",
-              usage.source === "estimated" && "opacity-60",
-            )}
+            className="group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85"
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -63,22 +72,16 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
                   strokeLinecap="round"
                   strokeDasharray={circumference}
                   strokeDashoffset={dashOffset}
-                  className={cn(
-                    "transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none",
-                    usage.source === "estimated" && "opacity-60",
-                  )}
+                  className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
                 />
               </svg>
               <span
                 className={cn(
                   "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium",
                   "text-muted-foreground",
-                  usage.source === "estimated" && "opacity-60",
                 )}
               >
-                {usage.usedPercentage !== null
-                  ? Math.round(usage.usedPercentage)
-                  : formatContextWindowTokens(usage.usedTokens)}
+                {badgeText}
               </span>
             </span>
           </button>
@@ -86,8 +89,11 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
       />
       <PopoverPopup tooltipStyle side="top" align="end" className="w-max max-w-none px-3 py-2">
         <div className="space-y-1.5 leading-tight">
-          <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            Context window
+          <div className="flex items-baseline gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            <span>Context window</span>
+            {usage.source === "estimated" ? (
+              <span className="text-[10px] normal-case opacity-70">(estimated)</span>
+            ) : null}
           </div>
           {usage.maxTokens !== null && usedPercentage ? (
             <div className="whitespace-nowrap text-xs font-medium text-foreground">
@@ -99,6 +105,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
             </div>
           ) : (
             <div className="text-sm text-foreground">
+              {usage.source === "estimated" ? "~" : ""}
               {formatContextWindowTokens(usage.usedTokens)} tokens used so far
             </div>
           )}

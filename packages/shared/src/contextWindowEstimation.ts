@@ -81,5 +81,5 @@ export function estimateContentTokens(
     totalChars += typeof segment.text === "string" ? segment.text.length : 0;
   }
 
-  return Math.max(0, Math.round(totalChars / ratio));
+  return Math.max(0, Math.ceil(totalChars / ratio));
 }
