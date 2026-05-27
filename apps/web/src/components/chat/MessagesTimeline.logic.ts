@@ -41,6 +41,14 @@ export type MessagesTimelineRow =
       text: string;
     }
   | {
+      kind: "queued-turn";
+      id: string;
+      createdAt: string;
+      queueItemId: string;
+      status: "pending" | "sending" | "failed";
+      text: string;
+    }
+  | {
       kind: "proposed-plan";
       id: string;
       createdAt: string;
@@ -182,6 +190,18 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "queued-turn") {
+      nextRows.push({
+        kind: "queued-turn",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        queueItemId: timelineEntry.queueItemId,
+        status: timelineEntry.status,
+        text: timelineEntry.text,
+      });
+      continue;
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       input.activeTurnInProgress === true &&
@@ -278,6 +298,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "steer-entry": {
       const bs = b as typeof a;
       return a.steerEntryId === bs.steerEntryId && a.turnId === bs.turnId && a.text === bs.text;
+    }
+
+    case "queued-turn": {
+      const bq = b as typeof a;
+      return a.queueItemId === bq.queueItemId && a.status === bq.status && a.text === bq.text;
     }
   }
 }

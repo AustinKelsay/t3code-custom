@@ -1704,8 +1704,15 @@ export default function ChatView(props: ChatViewProps) {
         activeThread?.proposedPlans ?? [],
         workLogEntries,
         activeThread?.steerEntries ?? [],
+        activeThread?.queuedTurns ?? [],
       ),
-    [activeThread?.proposedPlans, activeThread?.steerEntries, timelineMessages, workLogEntries],
+    [
+      activeThread?.proposedPlans,
+      activeThread?.queuedTurns,
+      activeThread?.steerEntries,
+      timelineMessages,
+      workLogEntries,
+    ],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);

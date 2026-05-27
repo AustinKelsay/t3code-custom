@@ -1568,15 +1568,30 @@ export function makeOpenCodeAdapter(
           }),
         ).pipe(Effect.mapError(toRequestError));
 
-        const assistantMessages = (messages.data ?? []).filter(
-          (entry) => entry.info.role === "assistant",
-        );
+        const allMessages = messages.data ?? [];
+        const assistantMessages = allMessages.filter((entry) => entry.info.role === "assistant");
         const targetIndex = assistantMessages.length - numTurns - 1;
         const target = targetIndex >= 0 ? assistantMessages[targetIndex] : null;
+
+        // When reverting all assistant turns, fall back to the last
+        // non-assistant message so the SDK always receives a messageID.
+        const revertTarget =
+          target ??
+          allMessages.toReversed().find((entry) => entry.info.role !== "assistant") ??
+          null;
+
+        if (!revertTarget) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "rollbackThread",
+            detail: "Cannot revert: no target message found to revert to.",
+          });
+        }
+
         yield* runOpenCodeSdk("session.revert", () =>
           context.client.session.revert({
             sessionID: context.openCodeSessionId,
-            ...(target ? { messageID: target.info.id } : {}),
+            messageID: revertTarget.info.id,
           }),
         ).pipe(Effect.mapError(toRequestError));
 

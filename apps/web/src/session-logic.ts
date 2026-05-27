@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
+  type OrchestrationQueuedTurn,
   type OrchestrationSteerEntry,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
@@ -114,6 +115,14 @@ export type TimelineEntry =
       createdAt: string;
       steerEntryId: string;
       turnId: TurnId;
+      text: string;
+    }
+  | {
+      id: string;
+      kind: "queued-turn";
+      createdAt: string;
+      queueItemId: string;
+      status: OrchestrationQueuedTurn["status"];
       text: string;
     }
   | {
@@ -1191,6 +1200,7 @@ export function deriveTimelineEntries(
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
   steerEntries: OrchestrationSteerEntry[],
+  queuedTurns: ReadonlyArray<OrchestrationQueuedTurn> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1206,6 +1216,14 @@ export function deriveTimelineEntries(
     turnId: steerEntry.turnId,
     text: steerEntry.text,
   }));
+  const queuedTurnRows: TimelineEntry[] = queuedTurns.map((queuedTurn) => ({
+    id: `queued-turn:${queuedTurn.queueItemId}`,
+    kind: "queued-turn",
+    createdAt: queuedTurn.createdAt,
+    queueItemId: queuedTurn.queueItemId,
+    status: queuedTurn.status,
+    text: queuedTurn.request.message.text,
+  }));
   const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
     id: proposedPlan.id,
     kind: "proposed-plan",
@@ -1218,9 +1236,13 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...steerEntryRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return [
+    ...messageRows,
+    ...steerEntryRows,
+    ...queuedTurnRows,
+    ...proposedPlanRows,
+    ...workRows,
+  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function deriveCompletionDividerBeforeEntryId(

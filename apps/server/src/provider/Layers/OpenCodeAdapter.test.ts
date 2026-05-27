@@ -145,14 +145,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         messages: async () => ({ data: runtimeMock.state.messages }),
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
+          if (!messageID) {
+            throw new Error("Expected object, got undefined");
+          }
           runtimeMock.state.revertCalls.push({
             sessionID,
-            ...(messageID ? { messageID } : {}),
+            messageID,
           });
-          if (!messageID) {
-            runtimeMock.state.messages = [];
-            return;
-          }
 
           const targetIndex = runtimeMock.state.messages.findIndex(
             (entry) => entry.info.id === messageID,
@@ -634,6 +633,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
       runtimeMock.state.messages = [
         {
+          info: { id: "user-1", role: "user" },
+          parts: [],
+        },
+        {
           info: { id: "assistant-1", role: "assistant" },
           parts: [],
         },
@@ -646,10 +649,87 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const snapshot = yield* adapter.rollbackThread(threadId, 2);
 
       assert.deepEqual(runtimeMock.state.revertCalls, [
-        { sessionID: "http://127.0.0.1:9999/session" },
+        { sessionID: "http://127.0.0.1:9999/session", messageID: "user-1" },
       ]);
       assert.deepEqual(snapshot.turns, []);
     }),
+  );
+
+  it.effect("reverts the last assistant turn while preserving earlier turns", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-rollback-partial");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      runtimeMock.state.messages = [
+        {
+          info: { id: "user-1", role: "user" },
+          parts: [],
+        },
+        {
+          info: { id: "assistant-1", role: "assistant" },
+          parts: [],
+        },
+        {
+          info: { id: "user-2", role: "user" },
+          parts: [],
+        },
+        {
+          info: { id: "assistant-2", role: "assistant" },
+          parts: [],
+        },
+      ];
+
+      const snapshot = yield* adapter.rollbackThread(threadId, 1);
+
+      assert.deepEqual(runtimeMock.state.revertCalls, [
+        { sessionID: "http://127.0.0.1:9999/session", messageID: "assistant-1" },
+      ]);
+      assert.deepEqual(snapshot.turns, [
+        {
+          id: "assistant-1",
+          items: [{ id: "assistant-1", role: "assistant" }],
+        },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "fails gracefully when reverting all turns with no non-assistant message to target",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-rollback-no-target");
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        runtimeMock.state.messages = [
+          {
+            info: { id: "assistant-1", role: "assistant" },
+            parts: [],
+          },
+          {
+            info: { id: "assistant-2", role: "assistant" },
+            parts: [],
+          },
+        ];
+
+        const error = yield* adapter.rollbackThread(threadId, 2).pipe(Effect.flip);
+
+        assert.equal(error._tag, "ProviderAdapterRequestError");
+        assert.equal(
+          (error as Extract<typeof error, { _tag: "ProviderAdapterRequestError" }>).detail,
+          "Cannot revert: no target message found to revert to.",
+        );
+        assert.deepEqual(runtimeMock.state.revertCalls, []);
+      }),
   );
 
   it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>

@@ -1779,7 +1779,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-mobile-version-banner" as MessageId,
         targetText: "mobile version banner",
       }),
-      configureFixture: () => {
+      configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           environment: {
@@ -1863,7 +1863,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
-      configureFixture: () => {
+      configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           availableEditors: ["vscode"],
