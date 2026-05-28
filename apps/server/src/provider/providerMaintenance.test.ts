@@ -1,12 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, expect, it } from "@effect/vitest";
 import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import os from "node:os";
 import path from "node:path";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
 import {
   clearLatestProviderVersionCacheForTests,
   createProviderVersionAdvisory,
@@ -19,10 +19,11 @@ import {
 import { OpenCodeMaintenanceCapabilities } from "./Drivers/OpenCodeDriver.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
-const makeTempDir = Effect.fn("makeTempDir")(function* (name: string) {
-  const id = yield* Random.nextUUIDv4;
-  return path.join(os.tmpdir(), `${name}-${id}`);
-});
+const makeTempDir = (name: string) =>
+  Crypto.Crypto.pipe(
+    Effect.flatMap((crypto) => crypto.randomUUIDv4),
+    Effect.map((id) => path.join(os.tmpdir(), `${name}-${id}`)),
+  );
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
@@ -69,7 +70,7 @@ afterEach(() => {
   clearLatestProviderVersionCacheForTests();
 });
 
-describe("providerMaintenance", () => {
+it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it("marks providers with unknown current versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
@@ -425,7 +426,7 @@ describe("providerMaintenance", () => {
         env: {
           PATH: "",
         },
-      }).pipe(Effect.provide(NodeServices.layer));
+      });
 
       expect(capabilities).toEqual({
         provider: driver("packageTool"),
@@ -473,7 +474,7 @@ describe("providerMaintenance", () => {
         env: {
           PATH: "",
         },
-      }).pipe(Effect.provide(NodeServices.layer));
+      });
 
       expect(capabilities).toEqual({
         provider: driver("packageTool"),
