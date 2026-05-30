@@ -696,8 +696,11 @@ export function getCursorFallbackModels(
   return providerModelsFromSettings([], PROVIDER, cursorSettings.customModels, EMPTY_CAPABILITIES);
 }
 
-/** Timeout for `agent about` — it's slower than a simple `--version` probe. */
-const ABOUT_TIMEOUT_MS = 8_000;
+/** Timeout for `agent about` — it makes blocking API calls to Cursor's servers. */
+const ABOUT_TIMEOUT_MS = 20_000;
+
+/** Per-subcommand timeout to prevent a hanging variant from blocking fallback. */
+const ABOUT_SUBCOMMAND_TIMEOUT_MS = 5_000;
 
 /** Strip ANSI escape sequences so we can parse plain key-value lines. */
 function stripAnsi(text: string): string {
@@ -1088,10 +1091,14 @@ const runCursorAboutCommand = (
       cursorSettings,
       ["about", "--format", "json"],
       environment,
-    );
-    if (!isCursorAboutJsonFormatUnsupported(jsonResult)) {
-      return jsonResult;
+    ).pipe(Effect.timeoutOption(ABOUT_SUBCOMMAND_TIMEOUT_MS));
+
+    if (Option.isSome(jsonResult)) {
+      if (!isCursorAboutJsonFormatUnsupported(jsonResult.value)) {
+        return jsonResult.value;
+      }
     }
+
     return yield* runCursorCommand(cursorSettings, ["about"], environment);
   });
 
