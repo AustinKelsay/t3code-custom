@@ -70,8 +70,9 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
                   stroke="var(--color-muted-foreground)"
                   strokeWidth="3"
                   strokeLinecap="round"
-                  strokeDasharray={circumference}
+                  strokeDasharray={usage.source === "estimated" ? "3 3" : circumference}
                   strokeDashoffset={dashOffset}
+                  style={usage.source === "estimated" ? { opacity: 0.6 } : undefined}
                   className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
                 />
               </svg>

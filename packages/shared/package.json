@@ -103,7 +103,7 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
-"./orchestrationQueue": {
+    "./orchestrationQueue": {
       "types": "./src/orchestrationQueue.ts",
       "import": "./src/orchestrationQueue.ts"
     },
