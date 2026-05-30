@@ -102,7 +102,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderInteractionModeToggle, getProviderModel } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
@@ -790,13 +790,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Context window
   // ------------------------------------------------------------------
+  const selectedProviderModel = useMemo(
+    () => getProviderModel(selectedProviderModels, selectedModel, selectedProvider),
+    [selectedProviderModels, selectedModel, selectedProvider],
+  );
   const fallbackMaxTokens = useMemo(() => {
     const fromThread = resolveContextWindowLimit(activeThreadModelSelection?.options);
     if (fromThread !== null) {
       return fromThread;
     }
-    return resolveContextWindowLimit(selectedModelSelection.options);
-  }, [activeThreadModelSelection?.options, selectedModelSelection.options]);
+    const fromSelection = resolveContextWindowLimit(selectedModelSelection.options);
+    if (fromSelection !== null) {
+      return fromSelection;
+    }
+    return selectedProviderModel?.maxContextTokens ?? null;
+  }, [
+    activeThreadModelSelection?.options,
+    selectedModelSelection.options,
+    selectedProviderModel?.maxContextTokens,
+  ]);
 
   const fallbackUsedTokens = useMemo(
     () => estimateContentTokens(activeThread?.messages ?? []),

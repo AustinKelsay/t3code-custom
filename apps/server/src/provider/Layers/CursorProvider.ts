@@ -26,6 +26,7 @@ import {
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
 } from "@t3tools/shared/model";
+import { parseContextWindowTokenValue } from "@t3tools/shared/contextWindowEstimation";
 
 import {
   buildBooleanOptionDescriptor,
@@ -391,6 +392,16 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
     return [];
   }
 
+  const contextOption = configOptions.find(
+    (option) => option.category === "model_config" && isCursorContextConfigOption(option),
+  );
+  const currentContextWindowValue =
+    contextOption?.type === "select" ? contextOption.currentValue : undefined;
+  const maxContextTokens =
+    currentContextWindowValue != null
+      ? parseContextWindowTokenValue(currentContextWindowValue)
+      : null;
+
   const currentModelValue =
     modelOption.type === "select" ? modelOption.currentValue?.trim() || undefined : undefined;
   const currentModelCapabilities = buildCursorCapabilitiesFromConfigOptions(configOptions);
@@ -399,6 +410,7 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
     modelChoices.map((modelChoice) => ({
       slug: modelChoice.value.trim(),
       name: modelChoice.name.trim(),
+      maxContextTokens,
       capabilities:
         currentModelValue === modelChoice.value.trim()
           ? currentModelCapabilities

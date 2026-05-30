@@ -86,6 +86,15 @@ export function getProviderModelCapabilities(
   return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
 }
 
+export function getProviderModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderDriverKind,
+): ServerProviderModel | undefined {
+  const slug = normalizeModelSlug(model, provider);
+  return models.find((candidate) => candidate.slug === slug);
+}
+
 export function getDefaultServerModel(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,

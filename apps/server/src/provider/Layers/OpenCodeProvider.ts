@@ -236,11 +236,17 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
       }
 
       const subProvider = nonEmptyTrimmed(provider.name);
+      const modelLimit = model.limit?.context;
+      const maxContextTokens =
+        typeof modelLimit === "number" && Number.isFinite(modelLimit) && modelLimit > 0
+          ? Math.floor(modelLimit)
+          : undefined;
       models.push({
         slug: `${provider.id}/${model.id}`,
         name,
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,
+        maxContextTokens,
         capabilities: openCodeCapabilitiesForModel({
           providerID: provider.id,
           model,
