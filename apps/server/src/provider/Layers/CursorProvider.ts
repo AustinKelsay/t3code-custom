@@ -1163,9 +1163,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       probe: {
         installed: true,
         version: null,
-        status: "error",
+        status: "warning",
         auth: { status: "unknown" },
-        message: "Cursor Agent CLI is installed but timed out while running `agent about`.",
+        message:
+          "Cursor Agent CLI is installed but could not verify connection with Cursor's servers. Check your network or try again later. The agent should still work for ACP sessions.",
       },
     });
   }
