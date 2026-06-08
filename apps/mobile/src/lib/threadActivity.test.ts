@@ -27,6 +27,7 @@ function makeActivity(
 function makeThread(
   input: Partial<OrchestrationThread> & Pick<OrchestrationThread, "id" | "projectId" | "title">,
 ): OrchestrationThread {
+  const { queuedTurns, steerEntries, ...restInput } = input;
   return {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
@@ -43,7 +44,9 @@ function makeThread(
     activities: [],
     checkpoints: [],
     session: null,
-    ...input,
+    ...restInput,
+    queuedTurns: queuedTurns ?? [],
+    steerEntries: steerEntries ?? [],
   };
 }
 

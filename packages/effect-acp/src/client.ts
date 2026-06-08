@@ -5,8 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import { RpcClient, RpcServer } from "effect/unstable/rpc";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as AcpError from "./errors.ts";

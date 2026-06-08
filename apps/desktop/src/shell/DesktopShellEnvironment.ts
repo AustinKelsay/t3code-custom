@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { resolveKnownPosixCliDirs } from "@t3tools/shared/shell";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -299,8 +300,12 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
+    const knownCliPath = trimNonEmpty(
+      resolveKnownPosixCliDirs(config.env, config.platform).join(":"),
+    );
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      knownCliPath,
       readEnvPath(config.env),
     ]);
 

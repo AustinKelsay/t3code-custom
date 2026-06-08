@@ -308,6 +308,45 @@ export function mergePathValues(
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
+function readHomeDirectory(
+  env: NodeJS.ProcessEnv,
+  fallback = NodeOS.homedir(),
+): string | undefined {
+  return trimNonEmpty(env.HOME) ?? trimNonEmpty(fallback);
+}
+
+export function resolveKnownPosixCliDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  homeDirectory = NodeOS.homedir(),
+): ReadonlyArray<string> {
+  if (platform !== "darwin" && platform !== "linux") {
+    return [];
+  }
+
+  const home = readHomeDirectory(env, homeDirectory);
+  const platformDirs =
+    platform === "darwin"
+      ? ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"]
+      : [
+          "/home/linuxbrew/.linuxbrew/bin",
+          "/home/linuxbrew/.linuxbrew/sbin",
+          "/usr/local/bin",
+          "/usr/local/sbin",
+        ];
+  const homeDirs = home
+    ? [
+        `${home}/.local/bin`,
+        `${home}/.bun/bin`,
+        `${home}/.cargo/bin`,
+        `${home}/.volta/bin`,
+        platform === "darwin" ? `${home}/Library/pnpm` : `${home}/.local/share/pnpm`,
+      ]
+    : [];
+
+  return [...platformDirs, ...homeDirs];
+}
+
 function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
   return env.PATH ?? env.Path ?? env.path;
 }

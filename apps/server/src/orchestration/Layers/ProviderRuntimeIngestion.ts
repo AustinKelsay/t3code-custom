@@ -1271,7 +1271,7 @@ const make = Effect.gen(function* () {
           ) {
             yield* orchestrationEngine.dispatch({
               type: "thread.queued-turn.resolve",
-              commandId: providerCommandId(event, "queued-turn-resolve"),
+              commandId: yield* providerCommandId(event, "queued-turn-resolve"),
               threadId: thread.id,
               queueItemId: acceptedPendingTurnStart.queueItemId,
               turnId: eventTurnId,

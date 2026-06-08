@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -137,6 +138,7 @@ function makeLayer(
         getSnapshotSequence: () => Effect.die("getSnapshotSequence should not be called"),
       }),
     ),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -346,6 +348,7 @@ describe("QueuedTurnDrainReactor", () => {
           getSnapshotSequence: () => Effect.die("getSnapshotSequence should not be called"),
         }),
       ),
+      Layer.provide(NodeServices.layer),
     );
     const runtime = ManagedRuntime.make(layer);
     const scope = await Effect.runPromise(Scope.make("sequential"));

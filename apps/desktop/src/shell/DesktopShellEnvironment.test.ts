@@ -90,6 +90,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
+        HOME: "/Users/test",
         PATH: "/Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
@@ -109,7 +110,21 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(
+        env.PATH,
+        [
+          "/opt/homebrew/bin",
+          "/usr/bin",
+          "/opt/homebrew/sbin",
+          "/usr/local/bin",
+          "/usr/local/sbin",
+          "/Users/test/.local/bin",
+          "/Users/test/.bun/bin",
+          "/Users/test/.cargo/bin",
+          "/Users/test/.volta/bin",
+          "/Users/test/Library/pnpm",
+        ].join(":"),
+      );
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
     }),
@@ -119,6 +134,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
+        HOME: "/Users/test",
         PATH: "/usr/bin",
         SSH_AUTH_SOCK: "/tmp/inherited.sock",
       };
@@ -133,7 +149,21 @@ describe("DesktopShellEnvironment", () => {
           }),
       });
 
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
+      assert.equal(
+        env.PATH,
+        [
+          "/opt/homebrew/bin",
+          "/usr/bin",
+          "/opt/homebrew/sbin",
+          "/usr/local/bin",
+          "/usr/local/sbin",
+          "/Users/test/.local/bin",
+          "/Users/test/.bun/bin",
+          "/Users/test/.cargo/bin",
+          "/Users/test/.volta/bin",
+          "/Users/test/Library/pnpm",
+        ].join(":"),
+      );
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/inherited.sock");
     }),
   );
@@ -142,6 +172,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
+        HOME: "/home/test",
         PATH: "/usr/bin",
       };
 
@@ -155,7 +186,21 @@ describe("DesktopShellEnvironment", () => {
           }),
       });
 
-      assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
+      assert.equal(
+        env.PATH,
+        [
+          "/home/linuxbrew/.linuxbrew/bin",
+          "/usr/bin",
+          "/home/linuxbrew/.linuxbrew/sbin",
+          "/usr/local/bin",
+          "/usr/local/sbin",
+          "/home/test/.local/bin",
+          "/home/test/.bun/bin",
+          "/home/test/.cargo/bin",
+          "/home/test/.volta/bin",
+          "/home/test/.local/share/pnpm",
+        ].join(":"),
+      );
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
     }),
   );
@@ -164,6 +209,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/opt/homebrew/bin/nu",
+        HOME: "/Users/test",
         PATH: "/usr/bin",
       };
       const commands: string[] = [];
@@ -179,7 +225,21 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.deepEqual(commands, ["/opt/homebrew/bin/nu", "/bin/zsh", "/bin/launchctl"]);
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
+      assert.equal(
+        env.PATH,
+        [
+          "/opt/homebrew/bin",
+          "/usr/bin",
+          "/opt/homebrew/sbin",
+          "/usr/local/bin",
+          "/usr/local/sbin",
+          "/Users/test/.local/bin",
+          "/Users/test/.bun/bin",
+          "/Users/test/.cargo/bin",
+          "/Users/test/.volta/bin",
+          "/Users/test/Library/pnpm",
+        ].join(":"),
+      );
     }),
   );
 

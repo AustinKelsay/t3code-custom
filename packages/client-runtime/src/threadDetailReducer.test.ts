@@ -36,6 +36,8 @@ const baseThread: OrchestrationThread = {
   archivedAt: null,
   deletedAt: null,
   messages: [],
+  queuedTurns: [],
+  steerEntries: [],
   proposedPlans: [],
   activities: [],
   checkpoints: [],
