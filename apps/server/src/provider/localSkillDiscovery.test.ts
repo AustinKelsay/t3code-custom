@@ -8,12 +8,8 @@ import * as Path from "effect/Path";
 
 import { discoverLocalProviderSkills } from "./localSkillDiscovery.ts";
 
-const runNode = <A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
-
-it("discovers local SKILL.md folders with non-empty descriptions", () =>
-  runNode(
+it.layer(NodeServices.layer)("local skill discovery", (it) => {
+  it.effect("discovers local SKILL.md folders with non-empty descriptions", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -41,4 +37,5 @@ A canvas is a standalone artifact shown beside the chat.
       );
       assert.equal(skills[0]?.shortDescription, skills[0]?.description);
     }),
-  ));
+  );
+});
