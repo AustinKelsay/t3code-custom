@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Local skill discovery scans filesystem paths before Effect services are wired.
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";

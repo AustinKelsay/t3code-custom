@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - Test fixtures mirror OpenCode wall-clock payloads.
 import assert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";

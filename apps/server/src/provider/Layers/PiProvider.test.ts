@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - Tests encode and decode JSONL provider fixtures.
 import { assert, it } from "@effect/vitest";
 import { PiSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

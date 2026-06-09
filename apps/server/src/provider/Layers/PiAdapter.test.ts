@@ -1,3 +1,5 @@
+// @effect-diagnostics globalTimers:off - Tests model child-process stream timing with real timers.
+// @effect-diagnostics preferSchemaOverJson:off - Tests encode and decode JSONL child-process fixtures.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {

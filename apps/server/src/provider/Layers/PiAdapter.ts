@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - Pi CLI JSONL events are provider boundary payloads.
 import {
   ApprovalRequestId,
   EventId,

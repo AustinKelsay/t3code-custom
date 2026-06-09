@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - Pi CLI JSONL commands are provider boundary payloads.
 import { ProviderDriverKind, type PiSettings, type ServerProviderModel } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
