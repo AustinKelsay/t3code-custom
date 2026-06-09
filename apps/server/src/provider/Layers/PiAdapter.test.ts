@@ -207,6 +207,91 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("resumes a Pi session from a persisted session path", () =>
+    Effect.gen(function* () {
+      const { adapter, commands } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-resume-path");
+      const resumeCursor = {
+        schemaVersion: 1,
+        sessionId: "pi-existing-session",
+        sessionPath: "/tmp/pi-existing-session.jsonl",
+      };
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+        resumeCursor,
+      });
+
+      assert.deepStrictEqual(commands, [
+        {
+          command: "fake-pi",
+          args: ["--mode", "rpc", "--session", "/tmp/pi-existing-session.jsonl"],
+        },
+      ]);
+      assert.deepStrictEqual(session.resumeCursor, resumeCursor);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switches an active Pi RPC process to a persisted session path", () =>
+    Effect.gen(function* () {
+      const { adapter, commands, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-switch-session");
+      const resumeCursor = {
+        schemaVersion: 1,
+        sessionId: "pi-switched-session",
+        sessionPath: "/tmp/pi-switched-session.jsonl",
+      };
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const switchFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: PI_PROVIDER,
+          providerInstanceId: PI_INSTANCE,
+          runtimeMode: "approval-required",
+          cwd: "/tmp/pi-workspace",
+          resumeCursor,
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const switchCommand = findCommand(stdinLines, "switch_session");
+      assert.deepStrictEqual(scrubCommandId(switchCommand), {
+        id: "<command-id>",
+        type: "switch_session",
+        sessionPath: "/tmp/pi-switched-session.jsonl",
+      });
+      assert.strictEqual(commands.length, 1);
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: switchCommand.id,
+          type: "response",
+          command: "switch_session",
+          success: true,
+          data: { cancelled: false },
+        }),
+      );
+
+      const session = yield* Fiber.join(switchFiber);
+
+      assert.strictEqual(session.threadId, threadId);
+      assert.deepStrictEqual(session.resumeCursor, resumeCursor);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects a second prompt while a Pi turn is still active", () =>
     Effect.gen(function* () {
       const { adapter, stdinLines } = yield* makePiAdapterHarness();

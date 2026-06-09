@@ -32,6 +32,7 @@ import {
 import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
+const PI_RESUME_CURSOR_VERSION = 1;
 const PI_COMMAND_RESPONSE_TIMEOUT = Duration.seconds(15);
 const encoder = new TextEncoder();
 
@@ -65,6 +66,12 @@ interface EventBaseInput {
   readonly turnId?: TurnId | undefined;
   readonly itemId?: string | undefined;
   readonly requestId?: RuntimeRequestId | undefined;
+}
+
+interface PiResumeCursor {
+  readonly schemaVersion: typeof PI_RESUME_CURSOR_VERSION;
+  readonly sessionId?: string | undefined;
+  readonly sessionPath?: string | undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -184,6 +191,34 @@ function parsePiModelSelection(
   return provider && modelId ? { provider, modelId } : undefined;
 }
 
+function parsePiResumeCursor(raw: unknown): PiResumeCursor | undefined {
+  if (!isObject(raw) || raw.schemaVersion !== PI_RESUME_CURSOR_VERSION) {
+    return undefined;
+  }
+  const sessionId = stringField(raw, "sessionId");
+  const sessionPath = stringField(raw, "sessionPath");
+  if (!sessionId && !sessionPath) {
+    return undefined;
+  }
+  return {
+    schemaVersion: PI_RESUME_CURSOR_VERSION,
+    ...(sessionId ? { sessionId } : {}),
+    ...(sessionPath ? { sessionPath } : {}),
+  };
+}
+
+function makePiResumeCursor(threadId: ThreadId, resumeCursor: PiResumeCursor | undefined) {
+  return {
+    schemaVersion: PI_RESUME_CURSOR_VERSION,
+    sessionId: resumeCursor?.sessionId ?? threadId,
+    ...(resumeCursor?.sessionPath ? { sessionPath: resumeCursor.sessionPath } : {}),
+  } satisfies PiResumeCursor;
+}
+
+function piResumeCursorTarget(resumeCursor: PiResumeCursor | undefined): string | undefined {
+  return resumeCursor?.sessionPath ?? resumeCursor?.sessionId;
+}
+
 function isPiUserMessage(value: unknown): boolean {
   return isObject(value) && stringField(value, "role") === "user";
 }
@@ -261,11 +296,14 @@ function piForkMessagesFromRpcData(
   return Effect.succeed(messages);
 }
 
-function piForkResultFromRpcData(
+function piCancelledResultFromRpcData(
+  commandName: string,
   data: unknown,
 ): Effect.Effect<{ readonly cancelled: boolean }, ProviderAdapterRequestError> {
   if (!isObject(data)) {
-    return Effect.fail(piCommandFailed("pi/fork", "Pi fork response did not include data."));
+    return Effect.fail(
+      piCommandFailed(`pi/${commandName}`, `Pi ${commandName} response did not include data.`),
+    );
   }
   return Effect.succeed({
     cancelled: booleanField(data, "cancelled") ?? false,
@@ -832,11 +870,52 @@ export function makePiAdapter(
 
         const existing = sessions.get(input.threadId);
         if (existing) {
+          const resumeCursor = parsePiResumeCursor(input.resumeCursor);
+          const nextSessionPath = resumeCursor?.sessionPath;
+          const currentResumeCursor = parsePiResumeCursor(existing.session.resumeCursor);
+          if (
+            nextSessionPath &&
+            piResumeCursorTarget(currentResumeCursor) !== piResumeCursorTarget(resumeCursor)
+          ) {
+            if (existing.activeTurnId) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "startSession",
+                detail: "Pi session has an active turn; interrupt it before switching sessions.",
+              });
+            }
+            const switchData = yield* writeCommandAndAwaitResponse(existing, "switch_session", {
+              type: "switch_session",
+              sessionPath: nextSessionPath,
+            });
+            const switchResult = yield* piCancelledResultFromRpcData("switch_session", switchData);
+            if (switchResult.cancelled) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "startSession",
+                detail: "Pi session switch was cancelled.",
+              });
+            }
+            return yield* updateSession(existing, {
+              status: "ready",
+              activeTurnId: undefined,
+              ...(input.cwd ? { cwd: input.cwd } : {}),
+              ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+              resumeCursor: makePiResumeCursor(input.threadId, resumeCursor),
+            });
+          }
           return existing.session;
         }
 
         const now = yield* nowIso;
-        const args = ["--mode", "rpc", "--session-id", input.threadId];
+        const resumeCursor = parsePiResumeCursor(input.resumeCursor);
+        const resumeSession = resumeCursor?.sessionPath ?? resumeCursor?.sessionId;
+        const args = ["--mode", "rpc"];
+        if (resumeSession) {
+          args.push("--session", resumeSession);
+        } else {
+          args.push("--session-id", input.threadId);
+        }
         if (input.modelSelection?.model) {
           args.push("--model", input.modelSelection.model);
         }
@@ -864,6 +943,7 @@ export function makePiAdapter(
           runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          resumeCursor: makePiResumeCursor(input.threadId, resumeCursor),
           threadId: input.threadId,
           createdAt: now,
           updatedAt: now,
@@ -1290,7 +1370,7 @@ export function makePiAdapter(
           type: "fork",
           entryId: target.entryId,
         });
-        const forkResult = yield* piForkResultFromRpcData(forkData);
+        const forkResult = yield* piCancelledResultFromRpcData("fork", forkData);
         if (forkResult.cancelled) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
