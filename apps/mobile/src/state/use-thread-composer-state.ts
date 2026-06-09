@@ -13,6 +13,7 @@ import {
   pickComposerImages,
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { buildQueuedMessageDispatchCommand } from "../lib/queuedMessageDispatch";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, type QueuedThreadMessage } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -157,11 +158,6 @@ function useQueueDrain(input: {
         continue;
       }
 
-      const threadStatus = thread.session?.status;
-      if (threadStatus === "running" || threadStatus === "starting") {
-        continue;
-      }
-
       void sendQueuedMessage(nextQueuedMessage);
       return;
     }
@@ -206,7 +202,8 @@ export function useThreadComposerState() {
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
-  const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
+  const selectedThreadQueueCount =
+    selectedThreadQueuedMessages.length + (selectedThread?.queuedTurns.length ?? 0);
 
   const selectedThreadSessionActivity = useMemo(() => {
     if (!selectedThread?.session) {
@@ -250,20 +247,9 @@ export function useThreadComposerState() {
 
       beginDispatchingQueuedMessage(queuedMessage.messageId);
       try {
-        await client.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: queuedMessage.commandId,
-          threadId: queuedMessage.threadId,
-          message: {
-            messageId: queuedMessage.messageId,
-            role: "user",
-            text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
-          },
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt: queuedMessage.createdAt,
-        });
+        await client.orchestration.dispatchCommand(
+          buildQueuedMessageDispatchCommand({ queuedMessage, thread }),
+        );
 
         removeQueuedMessage(
           queuedMessage.environmentId,

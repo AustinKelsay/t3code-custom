@@ -6,6 +6,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TurnQueueItemId,
   TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -174,6 +175,75 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-queue-remove-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("removes queued turn rows when a queued turn is removed", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-queue-remove");
+        const queueItemId = TurnQueueItemId.make("queue-item-remove");
+        const messageId = MessageId.make("message-queue-remove");
+        const queuedAt = "2026-01-01T00:00:00.000Z";
+        const removedAt = "2026-01-01T00:00:01.000Z";
+
+        yield* eventStore.append({
+          type: "thread.turn-queued",
+          eventId: EventId.make("evt-queue-remove-1"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: queuedAt,
+          commandId: CommandId.make("cmd-queue-remove-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queue-remove-1"),
+          metadata: {},
+          payload: {
+            threadId,
+            queueItemId,
+            request: {
+              message: {
+                messageId,
+                role: "user",
+                text: "queued follow up",
+                attachments: [],
+              },
+            },
+            createdAt: queuedAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.queued-turn-removed",
+          eventId: EventId.make("evt-queue-remove-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: removedAt,
+          commandId: CommandId.make("cmd-queue-remove-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queue-remove-2"),
+          metadata: {},
+          payload: {
+            threadId,
+            queueItemId,
+            messageId,
+            createdAt: removedAt,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{ readonly queueItemId: string }>`
+          SELECT queue_item_id AS "queueItemId"
+          FROM projection_queued_turns
+        `;
+        assert.deepEqual(rows, []);
+      }),
+    );
+  },
+);
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",

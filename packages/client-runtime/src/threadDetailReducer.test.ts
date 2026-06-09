@@ -7,6 +7,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnQueueItemId,
+  TurnSteerEntryId,
   TurnId,
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "@t3tools/contracts";
@@ -119,6 +121,128 @@ describe("applyThreadDetailEvent", () => {
         },
       });
       expect(result.kind).toBe("deleted");
+    });
+  });
+
+  describe("queued turns", () => {
+    it("applies queued turn lifecycle events", () => {
+      const queuedAt = "2026-04-01T03:00:00.000Z";
+      const queueItemId = TurnQueueItemId.make("queue-item-1");
+      const messageId = MessageId.make("message-queued");
+
+      const queued = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 3,
+        occurredAt: queuedAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-queued",
+        payload: {
+          threadId: baseThread.id,
+          queueItemId,
+          request: {
+            message: {
+              messageId,
+              role: "user",
+              text: "follow up",
+              attachments: [],
+            },
+          },
+          createdAt: queuedAt,
+        },
+      });
+
+      expect(queued.kind).toBe("updated");
+      if (queued.kind !== "updated") return;
+      expect(queued.thread.queuedTurns).toEqual([
+        {
+          queueItemId,
+          request: {
+            message: {
+              messageId,
+              role: "user",
+              text: "follow up",
+              attachments: [],
+            },
+          },
+          status: "pending",
+          failureReason: null,
+          createdAt: queuedAt,
+          updatedAt: queuedAt,
+        },
+      ]);
+
+      const sendingAt = "2026-04-01T03:00:01.000Z";
+      const sending = applyThreadDetailEvent(queued.thread, {
+        ...baseEventFields,
+        sequence: 4,
+        occurredAt: sendingAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.queued-turn-send-started",
+        payload: {
+          threadId: baseThread.id,
+          queueItemId,
+          messageId,
+          createdAt: sendingAt,
+        },
+      });
+
+      expect(sending.kind).toBe("updated");
+      if (sending.kind !== "updated") return;
+      expect(sending.thread.queuedTurns[0]?.status).toBe("sending");
+
+      const removed = applyThreadDetailEvent(sending.thread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T03:00:02.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.queued-turn-removed",
+        payload: {
+          threadId: baseThread.id,
+          queueItemId,
+          messageId,
+          createdAt: "2026-04-01T03:00:02.000Z",
+        },
+      });
+
+      expect(removed.kind).toBe("updated");
+      if (removed.kind !== "updated") return;
+      expect(removed.thread.queuedTurns).toEqual([]);
+    });
+  });
+
+  describe("turn steering", () => {
+    it("records accepted steer entries", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T04:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-steer-accepted",
+        payload: {
+          threadId: baseThread.id,
+          steerEntryId: TurnSteerEntryId.make("steer-entry-1"),
+          turnId: TurnId.make("turn-1"),
+          messageId: MessageId.make("message-steer-1"),
+          text: "keep going",
+          createdAt: "2026-04-01T04:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.steerEntries).toEqual([
+        {
+          steerEntryId: "steer-entry-1",
+          turnId: "turn-1",
+          messageId: "message-steer-1",
+          text: "keep going",
+          createdAt: "2026-04-01T04:00:00.000Z",
+        },
+      ]);
     });
   });
 

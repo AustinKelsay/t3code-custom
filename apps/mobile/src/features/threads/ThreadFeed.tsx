@@ -525,15 +525,19 @@ function renderFeedEntry(
           <Text className="font-sans text-[15px] leading-[22px] text-white">
             {entry.queuedMessage.text}
           </Text>
-          {entry.queuedMessage.attachments.length > 0 ? (
+          {entry.queuedMessage.attachmentCount > 0 ? (
             <Text className="font-t3-medium text-xs text-white/75">
-              {entry.queuedMessage.attachments.length} image
-              {entry.queuedMessage.attachments.length === 1 ? "" : "s"} attached
+              {entry.queuedMessage.attachmentCount} image
+              {entry.queuedMessage.attachmentCount === 1 ? "" : "s"} attached
             </Text>
           ) : null}
         </View>
         <Text className="mt-1.5 px-1 text-right font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-          {entry.sending ? "dispatching" : `${relativeTime(entry.createdAt)} • pending`}
+          {entry.sending
+            ? "dispatching"
+            : entry.queuedMessage.status === "failed"
+              ? "failed"
+              : `${relativeTime(entry.createdAt)} • pending`}
         </Text>
       </View>
     );

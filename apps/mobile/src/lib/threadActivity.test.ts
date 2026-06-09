@@ -2,9 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnQueueItemId,
   TurnId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
@@ -169,6 +171,50 @@ describe("buildThreadFeed", () => {
         summary: "Run tests",
         detail: "bun run test",
         status: null,
+      },
+    ]);
+  });
+
+  it("includes durable server queued turns", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-3"),
+      projectId: ProjectId.make("project-1"),
+      title: "Queued server turns",
+      queuedTurns: [
+        {
+          queueItemId: TurnQueueItemId.make("queue-item-1"),
+          request: {
+            message: {
+              messageId: MessageId.make("message-server-queued"),
+              role: "user",
+              text: "server queued follow up",
+              attachments: [],
+            },
+          },
+          status: "pending",
+          failureReason: null,
+          createdAt: "2026-04-01T00:00:04.000Z",
+          updatedAt: "2026-04-01T00:00:04.000Z",
+        },
+      ],
+    });
+
+    const feed = buildThreadFeed(thread, [], null);
+
+    expect(feed).toEqual([
+      {
+        type: "queued-message",
+        id: "queue-item-1",
+        createdAt: "2026-04-01T00:00:04.000Z",
+        queuedMessage: {
+          id: "queue-item-1",
+          text: "server queued follow up",
+          attachmentCount: 0,
+          status: "pending",
+          failureReason: null,
+          createdAt: "2026-04-01T00:00:04.000Z",
+        },
+        sending: false,
       },
     ]);
   });

@@ -43,6 +43,15 @@ export interface QueuedThreadMessage {
   readonly createdAt: string;
 }
 
+export interface ThreadFeedQueuedMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly attachmentCount: number;
+  readonly status: "pending" | "sending" | "failed";
+  readonly failureReason: string | null;
+  readonly createdAt: string;
+}
+
 export interface ThreadFeedActivity {
   readonly id: string;
   readonly createdAt: string;
@@ -81,7 +90,7 @@ type RawThreadFeedEntry =
       readonly type: "queued-message";
       readonly id: string;
       readonly createdAt: string;
-      readonly queuedMessage: QueuedThreadMessage;
+      readonly queuedMessage: ThreadFeedQueuedMessage;
       readonly sending: boolean;
     }
   | {
@@ -909,8 +918,29 @@ export function buildThreadFeed(
         type: "queued-message",
         id: queuedMessage.messageId,
         createdAt: queuedMessage.createdAt,
-        queuedMessage,
+        queuedMessage: {
+          id: queuedMessage.messageId,
+          text: queuedMessage.text,
+          attachmentCount: queuedMessage.attachments.length,
+          status: queuedMessage.messageId === dispatchingQueuedMessageId ? "sending" : "pending",
+          failureReason: null,
+          createdAt: queuedMessage.createdAt,
+        },
         sending: queuedMessage.messageId === dispatchingQueuedMessageId,
+      })),
+      ...thread.queuedTurns.map<RawThreadFeedEntry>((queuedTurn) => ({
+        type: "queued-message",
+        id: queuedTurn.queueItemId,
+        createdAt: queuedTurn.createdAt,
+        queuedMessage: {
+          id: queuedTurn.queueItemId,
+          text: queuedTurn.request.message.text,
+          attachmentCount: queuedTurn.request.message.attachments.length,
+          status: queuedTurn.status,
+          failureReason: queuedTurn.failureReason,
+          createdAt: queuedTurn.createdAt,
+        },
+        sending: queuedTurn.status === "sending",
       })),
       ...workLogEntries
         .filter((entry) => {

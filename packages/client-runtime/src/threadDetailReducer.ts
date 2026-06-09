@@ -11,6 +11,7 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
+import { applyQueuedTurnLifecycleEvent } from "@t3tools/shared/orchestrationQueue";
 
 /**
  * Retention limits for collections within a thread.
@@ -191,6 +192,44 @@ export function applyThreadDetailEvent(
             startedAt: latestTurn.startedAt ?? event.payload.createdAt,
             completedAt: latestTurn.completedAt ?? event.payload.createdAt,
           },
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    case "thread.turn-queued":
+    case "thread.queued-turn-send-started":
+    case "thread.queued-turn-send-failed":
+    case "thread.queued-turn-requeued":
+    case "thread.queued-turn-resolved":
+    case "thread.queued-turn-removed":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          queuedTurns: applyQueuedTurnLifecycleEvent(thread.queuedTurns, event),
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    case "thread.turn-steer-accepted": {
+      const steerEntry = {
+        steerEntryId: event.payload.steerEntryId,
+        turnId: event.payload.turnId,
+        messageId: event.payload.messageId,
+        text: event.payload.text,
+        createdAt: event.payload.createdAt,
+      };
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          steerEntries: pipe(
+            thread.steerEntries,
+            Arr.filter((entry) => entry.steerEntryId !== steerEntry.steerEntryId),
+            Arr.append(steerEntry),
+            Arr.sortWith((entry) => entry.createdAt, O.String),
+          ),
           updatedAt: event.occurredAt,
         },
       };

@@ -1063,6 +1063,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.queued-turn-send-started":
         case "thread.queued-turn-resolved":
         case "thread.queued-turn-requeued":
+        case "thread.queued-turn-removed":
         case "thread.queued-turn-send-failed": {
           const operation = getQueuedTurnLifecycleOperation(event);
           switch (operation.kind) {
