@@ -398,6 +398,68 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("sets Pi thinking level before sending a turn", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-thinking-level");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+        modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha"),
+      });
+
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "think harder",
+          modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha", [
+            { id: "thinkingLevel", value: "high" },
+          ]),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const thinkingCommand = findCommand(stdinLines, "set_thinking_level");
+      assert.deepStrictEqual(scrubCommandId(thinkingCommand), {
+        id: "<command-id>",
+        type: "set_thinking_level",
+        level: "high",
+      });
+      assert.strictEqual(
+        stdinLines.some(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type === "prompt",
+        ),
+        false,
+      );
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: thinkingCommand.id,
+          type: "response",
+          command: "set_thinking_level",
+          success: true,
+        }),
+      );
+
+      const turn = yield* Fiber.join(turnFiber);
+      const promptCommand = findCommand(stdinLines, "prompt");
+      assert.strictEqual(turn.threadId, threadId);
+      assert.deepStrictEqual(scrubCommandId(promptCommand), {
+        id: "<command-id>",
+        type: "prompt",
+        message: "think harder",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reads Pi messages as thread turns grouped by user prompts", () =>
     Effect.gen(function* () {
       const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();

@@ -12,6 +12,7 @@ import {
   type ProviderSession,
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +46,7 @@ interface PiSessionContext {
   session: ProviderSession;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   activeTurnId: TurnId | undefined;
+  thinkingLevel: PiThinkingLevel | undefined;
   queueModesConfigured: boolean;
   readonly pendingExtensionRequests: Map<ApprovalRequestId, PendingPiExtensionRequest>;
 }
@@ -73,6 +75,9 @@ interface PiResumeCursor {
   readonly sessionId?: string | undefined;
   readonly sessionPath?: string | undefined;
 }
+
+const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
@@ -205,6 +210,11 @@ function parsePiResumeCursor(raw: unknown): PiResumeCursor | undefined {
     ...(sessionId ? { sessionId } : {}),
     ...(sessionPath ? { sessionPath } : {}),
   };
+}
+
+function parsePiThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
+  const trimmed = level?.trim();
+  return trimmed && PI_THINKING_LEVELS.has(trimmed) ? (trimmed as PiThinkingLevel) : undefined;
 }
 
 function makePiResumeCursor(threadId: ThreadId, resumeCursor: PiResumeCursor | undefined) {
@@ -910,6 +920,9 @@ export function makePiAdapter(
         const now = yield* nowIso;
         const resumeCursor = parsePiResumeCursor(input.resumeCursor);
         const resumeSession = resumeCursor?.sessionPath ?? resumeCursor?.sessionId;
+        const initialThinkingLevel = parsePiThinkingLevel(
+          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel"),
+        );
         const args = ["--mode", "rpc"];
         if (resumeSession) {
           args.push("--session", resumeSession);
@@ -918,6 +931,9 @@ export function makePiAdapter(
         }
         if (input.modelSelection?.model) {
           args.push("--model", input.modelSelection.model);
+        }
+        if (initialThinkingLevel) {
+          args.push("--thinking", initialThinkingLevel);
         }
         const command = ChildProcess.make(piSettings.binaryPath, args, {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -952,6 +968,7 @@ export function makePiAdapter(
           session,
           child,
           activeTurnId: undefined,
+          thinkingLevel: initialThinkingLevel,
           queueModesConfigured: false,
           pendingExtensionRequests: new Map(),
         };
@@ -1099,6 +1116,32 @@ export function makePiAdapter(
         });
       });
 
+    const ensurePiThinkingLevel = (
+      context: PiSessionContext,
+      rawThinkingLevel: string | undefined,
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+      Effect.gen(function* () {
+        if (!rawThinkingLevel) {
+          return;
+        }
+        const thinkingLevel = parsePiThinkingLevel(rawThinkingLevel);
+        if (!thinkingLevel) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "sendTurn",
+            detail: `Pi thinking level '${rawThinkingLevel}' is not supported.`,
+          });
+        }
+        if (context.thinkingLevel === thinkingLevel) {
+          return;
+        }
+        yield* writeCommandAndAwaitResponse(context, "set_thinking_level", {
+          type: "set_thinking_level",
+          level: thinkingLevel,
+        });
+        context.thinkingLevel = thinkingLevel;
+      });
+
     const sendTurn: PiAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* getSessionContext(input.threadId);
@@ -1120,6 +1163,10 @@ export function makePiAdapter(
 
         const selectedModel = input.modelSelection?.model?.trim();
         yield* ensurePiModelSelection(context, selectedModel);
+        yield* ensurePiThinkingLevel(
+          context,
+          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel"),
+        );
 
         const turnId = TurnId.make(`pi-turn-${yield* nextUuid}`);
         context.activeTurnId = turnId;

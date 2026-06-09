@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildSelectOptionDescriptor,
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
@@ -20,7 +21,22 @@ import {
 
 const PROVIDER = ProviderDriverKind.make("pi");
 const encoder = new TextEncoder();
-const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+const PI_THINKING_LEVEL_CAPABILITIES = createModelCapabilities({
+  optionDescriptors: [
+    buildSelectOptionDescriptor({
+      id: "thinkingLevel",
+      label: "Thinking",
+      options: [
+        { value: "off", label: "Off" },
+        { value: "minimal", label: "Minimal" },
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "Extra High" },
+      ],
+    }),
+  ],
+});
 
 const PI_PRESENTATION = {
   displayName: "Pi",
@@ -166,7 +182,7 @@ function buildPiModelsFromRpcData(data: unknown): ReadonlyArray<ServerProviderMo
       name: stringField(candidate, "name") ?? slug,
       subProvider: provider,
       isCustom: false,
-      capabilities: EMPTY_CAPABILITIES,
+      capabilities: PI_THINKING_LEVEL_CAPABILITIES,
       ...(contextWindow ? { maxContextTokens: contextWindow } : {}),
     });
   }

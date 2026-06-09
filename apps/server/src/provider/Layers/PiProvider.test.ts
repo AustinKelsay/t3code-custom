@@ -138,7 +138,24 @@ it.effect("populates Pi provider models from the runtime get_available_models RP
         name: "Alpha Model",
         subProvider: "spark-ingress",
         isCustom: false,
-        capabilities: { optionDescriptors: [] },
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinkingLevel",
+              label: "Thinking",
+              type: "select",
+              currentValue: "medium",
+              options: [
+                { id: "off", label: "Off" },
+                { id: "minimal", label: "Minimal" },
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+          ],
+        },
         maxContextTokens: 64000,
       },
       {
@@ -146,7 +163,24 @@ it.effect("populates Pi provider models from the runtime get_available_models RP
         name: "Beta Thinking",
         subProvider: "omlx",
         isCustom: false,
-        capabilities: { optionDescriptors: [] },
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinkingLevel",
+              label: "Thinking",
+              type: "select",
+              currentValue: "medium",
+              options: [
+                { id: "off", label: "Off" },
+                { id: "minimal", label: "Minimal" },
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+          ],
+        },
         maxContextTokens: 131072,
       },
     ]);
