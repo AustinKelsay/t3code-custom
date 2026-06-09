@@ -166,6 +166,18 @@ function piExtensionApprovalDecisionResponse(decision: ProviderApprovalDecision)
   } as const;
 }
 
+function parsePiModelSelection(
+  model: string,
+): { readonly provider: string; readonly modelId: string } | undefined {
+  const slashIndex = model.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === model.length - 1) {
+    return undefined;
+  }
+  const provider = model.slice(0, slashIndex).trim();
+  const modelId = model.slice(slashIndex + 1).trim();
+  return provider && modelId ? { provider, modelId } : undefined;
+}
+
 function piAdapterUnavailable(method: string) {
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
@@ -738,15 +750,15 @@ export function makePiAdapter(
         }
 
         const now = yield* nowIso;
-        const command = ChildProcess.make(
-          piSettings.binaryPath,
-          ["--mode", "rpc", "--session-id", input.threadId],
-          {
-            ...(input.cwd ? { cwd: input.cwd } : {}),
-            ...(options.environment ? { env: options.environment, extendEnv: true } : {}),
-            shell: process.platform === "win32",
-          },
-        );
+        const args = ["--mode", "rpc", "--session-id", input.threadId];
+        if (input.modelSelection?.model) {
+          args.push("--model", input.modelSelection.model);
+        }
+        const command = ChildProcess.make(piSettings.binaryPath, args, {
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          ...(options.environment ? { env: options.environment, extendEnv: true } : {}),
+          shell: process.platform === "win32",
+        });
         const child = yield* spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, runtimeScope),
           Effect.mapError(
@@ -895,6 +907,32 @@ export function makePiAdapter(
         context.queueModesConfigured = true;
       });
 
+    const ensurePiModelSelection = (
+      context: PiSessionContext,
+      model: string | undefined,
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+      Effect.gen(function* () {
+        if (!model || context.session.model === model) {
+          return;
+        }
+        const parsed = parsePiModelSelection(model);
+        if (!parsed) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "sendTurn",
+            detail: `Pi model selection '${model}' must use provider/modelId format.`,
+          });
+        }
+        yield* writeCommandAndAwaitResponse(context, "set_model", {
+          type: "set_model",
+          provider: parsed.provider,
+          modelId: parsed.modelId,
+        });
+        yield* updateSession(context, {
+          model,
+        });
+      });
+
     const sendTurn: PiAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* getSessionContext(input.threadId);
@@ -914,12 +952,15 @@ export function makePiAdapter(
           });
         }
 
+        const selectedModel = input.modelSelection?.model?.trim();
+        yield* ensurePiModelSelection(context, selectedModel);
+
         const turnId = TurnId.make(`pi-turn-${yield* nextUuid}`);
         context.activeTurnId = turnId;
         yield* updateSession(context, {
           status: "running",
           activeTurnId: turnId,
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          ...(selectedModel ? { model: selectedModel } : {}),
         });
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
@@ -1116,7 +1157,7 @@ export function makePiAdapter(
     return {
       provider: PROVIDER,
       capabilities: {
-        sessionModelSwitch: "unsupported",
+        sessionModelSwitch: "in-session",
         turnSteering: "native",
       },
       startSession,

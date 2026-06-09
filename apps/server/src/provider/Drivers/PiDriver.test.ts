@@ -49,7 +49,7 @@ it.effect("exposes package-managed Pi maintenance capabilities", () =>
       lockKey: "npm-global",
     });
     assert.deepStrictEqual(instance.adapter.capabilities, {
-      sessionModelSwitch: "unsupported",
+      sessionModelSwitch: "in-session",
       turnSteering: "native",
     });
     assert.deepStrictEqual((yield* instance.snapshot.getSnapshot).capabilities, {

@@ -8,6 +8,7 @@ import {
   ThreadId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -242,6 +243,72 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
           : stdinLines[0],
         { id: "<turn-id>", type: "prompt", message: "first prompt" },
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switches Pi models before sending a turn with a different selected model", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-model-switch");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "use alpha",
+          modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha"),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const setModelCommand = findCommand(stdinLines, "set_model");
+      assert.deepStrictEqual(scrubCommandId(setModelCommand), {
+        id: "<command-id>",
+        type: "set_model",
+        provider: "spark-ingress",
+        modelId: "alpha",
+      });
+      assert.strictEqual(
+        stdinLines.some(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type === "prompt",
+        ),
+        false,
+      );
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: setModelCommand.id,
+          type: "response",
+          command: "set_model",
+          success: true,
+          data: {
+            provider: "spark-ingress",
+            id: "alpha",
+          },
+        }),
+      );
+
+      const turn = yield* Fiber.join(turnFiber);
+      const promptCommand = findCommand(stdinLines, "prompt");
+      assert.strictEqual(turn.threadId, threadId);
+      assert.deepStrictEqual(scrubCommandId(promptCommand), {
+        id: "<command-id>",
+        type: "prompt",
+        message: "use alpha",
+      });
+      const sessions = yield* adapter.listSessions();
+      assert.strictEqual(sessions[0]?.model, "spark-ingress/alpha");
     }).pipe(Effect.scoped),
   );
 
