@@ -73,9 +73,11 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const piInstanceId = ProviderInstanceId.make("pi");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const PI_DRIVER = ProviderDriverKind.make("pi");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -299,10 +301,12 @@ function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const pi = makeFakeCodexAdapter(PI_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
     [ProviderDriverKind.make("cursor")]: cursor.adapter,
+    [ProviderDriverKind.make("pi")]: pi.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -331,6 +335,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
+    pi,
     layer,
   };
 }
@@ -803,6 +808,76 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("routes Pi sessions, turns, and runtime events through provider bindings", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-pi-provider-service");
+
+      const session = yield* provider.startSession(threadId, {
+        provider: PI_DRIVER,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/project-pi",
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "hello pi",
+        attachments: [],
+      });
+
+      const eventFiber = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* advanceTestClock(50);
+      routing.pi.emit({
+        type: "content.delta",
+        eventId: asEventId("evt-pi-service-content"),
+        provider: PI_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: turn.turnId,
+        payload: {
+          streamKind: "assistant_text",
+          delta: "hello from pi",
+        },
+      });
+      const events = Array.from(yield* Fiber.join(eventFiber));
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+
+      assert.equal(session.provider, "pi");
+      assert.equal(session.providerInstanceId, piInstanceId);
+      assert.equal(routing.pi.startSession.mock.calls.length, 1);
+      assert.equal(routing.pi.sendTurn.mock.calls.length, 1);
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.providerName, "pi");
+        assert.equal(runtime.value.providerInstanceId, piInstanceId);
+        assert.equal(runtime.value.status, "running");
+        const payload = runtime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, turn.turnId);
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+        }
+      }
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.provider, "pi");
+      assert.equal(events[0]?.providerInstanceId, piInstanceId);
+      assert.deepEqual(events[0]?.payload, {
+        streamKind: "assistant_text",
+        delta: "hello from pi",
+      });
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
   it.effect("routes native Codex steer and rejects unsupported provider steer", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
