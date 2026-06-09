@@ -88,8 +88,8 @@ function selectThreadQueuedTurns(
   threadId: ThreadId,
 ): Thread["queuedTurns"] {
   return collectByIds(
-    state.queuedTurnIdsByThreadId[threadId],
-    state.queuedTurnByThreadId[threadId] ?? EMPTY_QUEUED_TURN_MAP,
+    state.queuedTurnIdsByThreadId?.[threadId],
+    state.queuedTurnByThreadId?.[threadId] ?? EMPTY_QUEUED_TURN_MAP,
     EMPTY_QUEUED_TURNS,
   );
 }
