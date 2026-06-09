@@ -48,5 +48,12 @@ it.effect("exposes package-managed Pi maintenance capabilities", () =>
       args: ["install", "-g", "@earendil-works/pi-coding-agent@latest"],
       lockKey: "npm-global",
     });
+    assert.deepStrictEqual(instance.adapter.capabilities, {
+      sessionModelSwitch: "unsupported",
+      turnSteering: "native",
+    });
+    assert.deepStrictEqual((yield* instance.snapshot.getSnapshot).capabilities, {
+      turnSteering: "native",
+    });
   }).pipe(Effect.provide(testLayer), Effect.scoped),
 );

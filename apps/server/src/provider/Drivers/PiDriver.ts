@@ -54,7 +54,7 @@ const withInstanceIdentity =
     ...snapshot,
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
-    capabilities: { turnSteering: "unsupported" },
+    capabilities: { turnSteering: "native" },
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },

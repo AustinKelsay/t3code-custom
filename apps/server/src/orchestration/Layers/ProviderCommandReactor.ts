@@ -148,6 +148,15 @@ function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServic
   return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
 }
 
+function isNativeSteerActiveTurnRaceError(cause: Cause.Cause<ProviderServiceError>): boolean {
+  const error = findProviderAdapterRequestError(cause);
+  const detail = (error?.detail ?? Cause.pretty(cause)).toLowerCase();
+  return (
+    detail.includes("does not have an active turn to steer") ||
+    (detail.includes("active turn") && detail.includes("does not match expected turn"))
+  );
+}
+
 function stalePendingRequestDetail(
   requestKind: "approval" | "user-input",
   requestId: string,
@@ -942,9 +951,14 @@ const make = Effect.gen(function* () {
         input: event.payload.text,
       })
       .pipe(
-        Effect.catchCause((cause) =>
-          dispatchSteerFailure(formatFailureDetail(cause)).pipe(Effect.as(null)),
-        ),
+        Effect.catchCause((cause) => {
+          const detail = formatFailureDetail(cause);
+          return (
+            isNativeSteerActiveTurnRaceError(cause)
+              ? dispatchSteerFallbackToQueue(detail)
+              : dispatchSteerFailure(detail)
+          ).pipe(Effect.as(null));
+        }),
       );
     if (result === null) {
       return;

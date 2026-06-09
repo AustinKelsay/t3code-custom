@@ -369,10 +369,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
+    const harnessRuntime = runtime;
 
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
-    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const engine = await harnessRuntime.runPromise(Effect.service(OrchestrationEngineService));
+    const snapshotQuery = await harnessRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
+    const reactor = await harnessRuntime.runPromise(Effect.service(ProviderCommandReactor));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -406,6 +407,8 @@ describe("ProviderCommandReactor", () => {
 
     return {
       engine,
+      dispatch: (command: Parameters<typeof engine.dispatch>[0]) =>
+        harnessRuntime.runPromise(engine.dispatch(command)),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -668,6 +671,72 @@ describe("ProviderCommandReactor", () => {
     expect(
       thread?.activities.some((activity) => activity.kind === "turn.steer.fallback-queued"),
     ).toBe(true);
+  });
+
+  it("falls back to a queued turn when native steer loses the active-turn race", async () => {
+    const harness = await createHarness({ turnSteering: "native" });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+    harness.steerTurn.mockImplementationOnce(
+      () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: ProviderDriverKind.make("pi"),
+            method: "steerTurn",
+            detail: "Pi session does not have an active turn to steer.",
+          }),
+        ) as ReturnType<ProviderServiceShape["steerTurn"]>,
+    );
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-running-steer-race"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "pi",
+        providerInstanceId: ProviderInstanceId.make("pi"),
+        runtimeMode: "approval-required",
+        activeTurnId,
+        lastError: null,
+        updatedAt: now,
+      },
+      createdAt: now,
+    });
+
+    await harness.dispatch({
+      type: "thread.turn.steer",
+      commandId: CommandId.make("cmd-turn-steer-race"),
+      threadId,
+      turnId: activeTurnId,
+      message: {
+        messageId: asMessageId("message-steer-race"),
+        role: "user",
+        text: "Queue this if Pi already finished.",
+        attachments: [],
+      },
+      createdAt: now,
+    });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread?.queuedTurns.length === 1;
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(harness.steerTurn.mock.calls.length).toBe(1);
+    expect(thread?.queuedTurns[0]?.request.message.messageId).toBe(
+      asMessageId("message-steer-race"),
+    );
+    expect(
+      thread?.activities.some((activity) => activity.kind === "turn.steer.fallback-queued"),
+    ).toBe(true);
+    expect(thread?.activities.some((activity) => activity.kind === "turn.steer.failed")).toBe(
+      false,
+    );
   });
 
   it("records steer failure when the native provider request fails", async () => {

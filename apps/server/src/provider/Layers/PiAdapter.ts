@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -24,6 +27,7 @@ import {
 import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
+const PI_COMMAND_RESPONSE_TIMEOUT = Duration.seconds(15);
 const encoder = new TextEncoder();
 
 export interface PiAdapterOptions {
@@ -35,6 +39,12 @@ interface PiSessionContext {
   session: ProviderSession;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   activeTurnId: TurnId | undefined;
+  queueModesConfigured: boolean;
+}
+
+interface PendingPiResponse {
+  readonly command: string;
+  readonly deferred: Deferred.Deferred<void, ProviderAdapterRequestError>;
 }
 
 interface EventBaseInput {
@@ -55,6 +65,14 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+function stringArrayField(record: Record<string, unknown>, key: string): ReadonlyArray<string> {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
 }
 
 function piResultDetail(value: unknown): string | undefined {
@@ -78,11 +96,30 @@ function piToolItemType(toolName: string | undefined): "command_execution" | "dy
     : "dynamic_tool_call";
 }
 
+function piQueueDetail(steering: ReadonlyArray<string>, followUp: ReadonlyArray<string>): string {
+  const parts: string[] = [];
+  if (steering.length > 0) {
+    parts.push(`Steering: ${steering.join(" | ")}`);
+  }
+  if (followUp.length > 0) {
+    parts.push(`Follow-up: ${followUp.join(" | ")}`);
+  }
+  return parts.length > 0 ? parts.join("\n") : "Pi queue is empty.";
+}
+
 function piAdapterUnavailable(method: string) {
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
     method,
     detail: "Pi adapter support for this operation is not implemented yet.",
+  });
+}
+
+function piCommandFailed(method: string, detail: string) {
+  return new ProviderAdapterRequestError({
+    provider: PROVIDER,
+    method,
+    detail,
   });
 }
 
@@ -100,6 +137,7 @@ export function makePiAdapter(
     const runtimeScope = yield* Effect.scope;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, PiSessionContext>();
+    const pendingResponses = new Map<string, PendingPiResponse>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const nextUuid = crypto.randomUUIDv4.pipe(
@@ -155,6 +193,23 @@ export function makePiAdapter(
         if (type === "response") {
           const command = stringField(event, "command");
           const responseId = stringField(event, "id");
+          if (responseId) {
+            const pending = pendingResponses.get(responseId);
+            if (pending && (!command || pending.command === command)) {
+              pendingResponses.delete(responseId);
+              if (event.success === false) {
+                const error =
+                  stringField(event, "error") ?? `Pi ${pending.command} command failed.`;
+                yield* Deferred.fail(
+                  pending.deferred,
+                  piCommandFailed(`pi/${pending.command}`, error),
+                );
+              } else {
+                yield* Deferred.succeed(pending.deferred, undefined);
+              }
+              return;
+            }
+          }
           const activeTurnId = context.activeTurnId;
           if (
             command !== "prompt" ||
@@ -179,6 +234,32 @@ export function makePiAdapter(
             type: "turn.aborted",
             payload: {
               reason: error,
+            },
+          });
+          return;
+        }
+
+        if (type === "queue_update") {
+          const steering = stringArrayField(event, "steering");
+          const followUp = stringArrayField(event, "followUp");
+          const hasQueuedMessages = steering.length > 0 || followUp.length > 0;
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              itemId: "pi-queue",
+            })),
+            type: "item.updated",
+            payload: {
+              itemType: "dynamic_tool_call",
+              status: hasQueuedMessages ? "inProgress" : "completed",
+              title: "Pi queue",
+              detail: piQueueDetail(steering, followUp),
+              data: {
+                id: "pi-queue",
+                steering,
+                followUp,
+              },
             },
           });
           return;
@@ -454,6 +535,7 @@ export function makePiAdapter(
           session,
           child,
           activeTurnId: undefined,
+          queueModesConfigured: false,
         };
         sessions.set(input.threadId, context);
         yield* readPiJsonLines(context).pipe(
@@ -508,6 +590,70 @@ export function makePiAdapter(
             }),
         ),
       );
+
+    const writeCommandAndAwaitResponse = (
+      context: PiSessionContext,
+      commandName: string,
+      command: Record<string, unknown>,
+    ): Effect.Effect<void, ProviderAdapterRequestError> => {
+      let pendingCommandId: string | undefined;
+      return Effect.gen(function* () {
+        const commandId = stringField(command, "id") ?? `pi-${commandName}-${yield* nextUuid}`;
+        pendingCommandId = commandId;
+        const deferred = yield* Deferred.make<void, ProviderAdapterRequestError>();
+        pendingResponses.set(commandId, {
+          command: commandName,
+          deferred,
+        });
+        yield* writeCommand(context, {
+          ...command,
+          id: commandId,
+        });
+        yield* Deferred.await(deferred).pipe(
+          Effect.timeoutOption(PI_COMMAND_RESPONSE_TIMEOUT),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  piCommandFailed(
+                    `pi/${commandName}`,
+                    `Timed out waiting for Pi ${commandName} response.`,
+                  ),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (pendingCommandId) {
+              pendingResponses.delete(pendingCommandId);
+            }
+          }),
+        ),
+      );
+    };
+
+    const ensureQueueModesConfigured = (
+      context: PiSessionContext,
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+      Effect.gen(function* () {
+        if (context.queueModesConfigured) {
+          return;
+        }
+        yield* writeCommand(context, {
+          id: `pi-set-steering-mode-${yield* nextUuid}`,
+          type: "set_steering_mode",
+          mode: "one-at-a-time",
+        });
+        yield* writeCommand(context, {
+          id: `pi-set-follow-up-mode-${yield* nextUuid}`,
+          type: "set_follow_up_mode",
+          mode: "one-at-a-time",
+        });
+        context.queueModesConfigured = true;
+      });
 
     const sendTurn: PiAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
@@ -570,6 +716,72 @@ export function makePiAdapter(
         };
       });
 
+    const steerTurn: PiAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (input) {
+      const context = yield* getSessionContext(input.threadId);
+      if (!context.activeTurnId) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "steerTurn",
+          detail: "Pi session does not have an active turn to steer.",
+        });
+      }
+      if (context.activeTurnId !== input.expectedTurnId) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "steerTurn",
+          detail: `Pi active turn '${context.activeTurnId}' does not match expected turn '${input.expectedTurnId}'.`,
+        });
+      }
+
+      yield* ensureQueueModesConfigured(context);
+      yield* writeCommandAndAwaitResponse(context, "steer", {
+        type: "steer",
+        message: input.input,
+      });
+
+      return {
+        threadId: input.threadId,
+        turnId: input.expectedTurnId,
+      };
+    });
+
+    const interruptTurn: PiAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
+      function* (threadId, turnId) {
+        const context = yield* getSessionContext(threadId);
+        const activeTurnId = context.activeTurnId;
+        if (!activeTurnId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "interruptTurn",
+            detail: "Pi session does not have an active turn to interrupt.",
+          });
+        }
+        if (turnId && turnId !== activeTurnId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "interruptTurn",
+            detail: `Pi active turn '${activeTurnId}' does not match interrupt turn '${turnId}'.`,
+          });
+        }
+
+        yield* writeCommandAndAwaitResponse(context, "abort", {
+          type: "abort",
+        });
+        context.activeTurnId = undefined;
+        yield* updateSession(context, {
+          status: "ready",
+          activeTurnId: undefined,
+        });
+        yield* emit({
+          ...(yield* buildEventBase({ threadId, turnId: activeTurnId })),
+          type: "turn.aborted",
+          payload: {
+            reason: "Pi turn interrupted.",
+          },
+        });
+      },
+    );
+
     const stopSession: PiAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const context = sessions.get(threadId);
@@ -600,12 +812,12 @@ export function makePiAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "unsupported",
-        turnSteering: "unsupported",
+        turnSteering: "native",
       },
       startSession,
       sendTurn,
-      steerTurn: () => Effect.fail(piAdapterUnavailable("steerTurn")),
-      interruptTurn: () => Effect.fail(piAdapterUnavailable("interruptTurn")),
+      steerTurn,
+      interruptTurn,
       respondToRequest: () => Effect.fail(piAdapterUnavailable("respondToRequest")),
       respondToUserInput: () => Effect.fail(piAdapterUnavailable("respondToUserInput")),
       stopSession,
