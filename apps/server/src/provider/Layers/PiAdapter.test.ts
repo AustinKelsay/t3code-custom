@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ApprovalRequestId,
   PiSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -8,6 +9,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as PlatformError from "effect/PlatformError";
@@ -15,6 +17,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { makePiAdapter } from "./PiAdapter.ts";
@@ -447,6 +450,380 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
           followUp: [],
         },
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi confirm extension UI requests through approval responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const approvalEvents: ProviderRuntimeEvent[] = [];
+      const approvalFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "request.opened" || event.type === "request.resolved") {
+            approvalEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-confirm-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-1",
+          method: "confirm",
+          title: "Allow command?",
+          message: "Run rm -rf build?",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(approvalEvents.length, 1);
+      assert.strictEqual(approvalEvents[0]?.type, "request.opened");
+      assert.strictEqual(approvalEvents[0]?.requestId, "pi-confirm-1");
+      assert.strictEqual(approvalEvents[0]?.turnId, turn.turnId);
+      assert.deepStrictEqual(approvalEvents[0]?.payload, {
+        requestType: "command_execution_approval",
+        detail: "Allow command?\nRun rm -rf build?",
+        args: {
+          id: "pi-confirm-1",
+          method: "confirm",
+          title: "Allow command?",
+          message: "Run rm -rf build?",
+        },
+      });
+
+      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("pi-confirm-1"), "accept");
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(approvalFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-confirm-1",
+        confirmed: true,
+      });
+      assert.strictEqual(approvalEvents[1]?.type, "request.resolved");
+      assert.deepStrictEqual(approvalEvents[1]?.payload, {
+        requestType: "command_execution_approval",
+        decision: "accept",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps cancelled Pi confirm approvals to cancelled extension UI responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-confirm-cancelled");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-cancel",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("pi-confirm-cancel"),
+        "cancel",
+      );
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-confirm-cancel",
+        cancelled: true,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi select extension UI requests through user-input responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const userInputEvents: ProviderRuntimeEvent[] = [];
+      const userInputFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "user-input.requested" || event.type === "user-input.resolved") {
+            userInputEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-select-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-select-1",
+          method: "select",
+          title: "Choose a backend",
+          options: ["SQLite", "Postgres"],
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(userInputEvents[0]?.type, "user-input.requested");
+      assert.strictEqual(userInputEvents[0]?.requestId, "pi-select-1");
+      assert.deepStrictEqual(userInputEvents[0]?.payload, {
+        questions: [
+          {
+            id: "value",
+            header: "Choose a backend",
+            question: "Choose a backend",
+            options: [
+              { label: "SQLite", description: "SQLite" },
+              { label: "Postgres", description: "Postgres" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      });
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-select-1"), {
+        value: "Postgres",
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(userInputFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-select-1",
+        value: "Postgres",
+      });
+      assert.deepStrictEqual(userInputEvents[1]?.payload, {
+        answers: {
+          value: "Postgres",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi input extension UI requests through user-input responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const userInputEvents: ProviderRuntimeEvent[] = [];
+      const userInputFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "user-input.requested" || event.type === "user-input.resolved") {
+            userInputEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-input-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-input-1",
+          method: "input",
+          title: "API key",
+          placeholder: "Paste token",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(userInputEvents[0]?.type, "user-input.requested");
+      assert.deepStrictEqual(userInputEvents[0]?.payload, {
+        questions: [
+          {
+            id: "value",
+            header: "API key",
+            question: "Paste token",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      });
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-input-1"), {
+        value: "secret-token",
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(userInputFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-input-1",
+        value: "secret-token",
+      });
+      assert.deepStrictEqual(userInputEvents[1]?.payload, {
+        answers: {
+          value: "secret-token",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("cleans up timed-out Pi extension UI requests without writing a response", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const approvalEvents: ProviderRuntimeEvent[] = [];
+      const approvalFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "request.opened" || event.type === "request.resolved") {
+            approvalEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-timeout-cleanup");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-timeout-1",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+          timeout: 10,
+        }),
+      );
+      yield* TestClock.adjust(Duration.millis(10));
+      yield* Effect.yieldNow;
+
+      const error = yield* adapter
+        .respondToRequest(threadId, ApprovalRequestId.make("pi-timeout-1"), "accept")
+        .pipe(Effect.flip);
+      yield* Fiber.interrupt(approvalFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(approvalEvents.length, 2);
+      assert.strictEqual(approvalEvents[0]?.type, "request.opened");
+      assert.strictEqual(approvalEvents[1]?.type, "request.resolved");
+      assert.deepStrictEqual(approvalEvents[1]?.payload, {
+        requestType: "command_execution_approval",
+        decision: "cancel",
+      });
+      assert.strictEqual(stdinLines.length, 1);
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.detail, "Unknown pending Pi extension UI request: pi-timeout-1");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("handles multiple concurrent Pi extension UI requests independently", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-concurrent-ui");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-concurrent",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-input-concurrent",
+          method: "input",
+          title: "Name",
+          placeholder: "Name",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-input-concurrent"), {
+        value: "Ada",
+      });
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("pi-confirm-concurrent"),
+        "decline",
+      );
+
+      assert.deepStrictEqual(stdinLines.slice(-2), [
+        {
+          type: "extension_ui_response",
+          id: "pi-input-concurrent",
+          value: "Ada",
+        },
+        {
+          type: "extension_ui_response",
+          id: "pi-confirm-concurrent",
+          confirmed: false,
+        },
+      ]);
     }).pipe(Effect.scoped),
   );
 
