@@ -27,6 +27,7 @@ import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
 } from "../Errors.ts";
 import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 
@@ -49,7 +50,7 @@ interface PiSessionContext {
 
 interface PendingPiResponse {
   readonly command: string;
-  readonly deferred: Deferred.Deferred<void, ProviderAdapterRequestError>;
+  readonly deferred: Deferred.Deferred<unknown, ProviderAdapterRequestError>;
 }
 
 interface PendingPiExtensionRequest {
@@ -78,6 +79,11 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function stringArrayField(record: Record<string, unknown>, key: string): ReadonlyArray<string> {
@@ -178,11 +184,91 @@ function parsePiModelSelection(
   return provider && modelId ? { provider, modelId } : undefined;
 }
 
-function piAdapterUnavailable(method: string) {
-  return new ProviderAdapterRequestError({
-    provider: PROVIDER,
-    method,
-    detail: "Pi adapter support for this operation is not implemented yet.",
+function isPiUserMessage(value: unknown): boolean {
+  return isObject(value) && stringField(value, "role") === "user";
+}
+
+function buildPiThreadTurns(messages: ReadonlyArray<unknown>) {
+  const turns: Array<{ id: TurnId; items: Array<unknown> }> = [];
+  let currentTurn: { id: TurnId; items: Array<unknown> } | undefined;
+
+  for (const message of messages) {
+    if (!currentTurn || isPiUserMessage(message)) {
+      currentTurn = {
+        id: TurnId.make(`pi-history-turn-${turns.length}`),
+        items: [message],
+      };
+      turns.push(currentTurn);
+      continue;
+    }
+
+    currentTurn.items.push(message);
+  }
+
+  return turns;
+}
+
+function piMessagesFromRpcData(
+  commandName: string,
+  data: unknown,
+): Effect.Effect<ReadonlyArray<unknown>, ProviderAdapterRequestError> {
+  if (!isObject(data) || !Array.isArray(data.messages)) {
+    return Effect.fail(
+      piCommandFailed(
+        `pi/${commandName}`,
+        `Pi ${commandName} response did not include a messages array.`,
+      ),
+    );
+  }
+  return Effect.succeed(data.messages);
+}
+
+function piForkMessagesFromRpcData(
+  data: unknown,
+): Effect.Effect<
+  ReadonlyArray<{ readonly entryId: string; readonly text: string }>,
+  ProviderAdapterRequestError
+> {
+  if (!isObject(data) || !Array.isArray(data.messages)) {
+    return Effect.fail(
+      piCommandFailed(
+        "pi/get_fork_messages",
+        "Pi get_fork_messages response did not include a messages array.",
+      ),
+    );
+  }
+
+  const messages: Array<{ readonly entryId: string; readonly text: string }> = [];
+  for (const message of data.messages) {
+    if (!isObject(message)) {
+      return Effect.fail(
+        piCommandFailed("pi/get_fork_messages", "Pi fork message entry was not an object."),
+      );
+    }
+    const entryId = stringField(message, "entryId");
+    const text = stringField(message, "text");
+    if (!entryId || !text) {
+      return Effect.fail(
+        piCommandFailed(
+          "pi/get_fork_messages",
+          "Pi fork message entry did not include entryId and text.",
+        ),
+      );
+    }
+    messages.push({ entryId, text });
+  }
+
+  return Effect.succeed(messages);
+}
+
+function piForkResultFromRpcData(
+  data: unknown,
+): Effect.Effect<{ readonly cancelled: boolean }, ProviderAdapterRequestError> {
+  if (!isObject(data)) {
+    return Effect.fail(piCommandFailed("pi/fork", "Pi fork response did not include data."));
+  }
+  return Effect.succeed({
+    cancelled: booleanField(data, "cancelled") ?? false,
   });
 }
 
@@ -450,7 +536,7 @@ export function makePiAdapter(
                   piCommandFailed(`pi/${pending.command}`, error),
                 );
               } else {
-                yield* Deferred.succeed(pending.deferred, undefined);
+                yield* Deferred.succeed(pending.deferred, event.data);
               }
               return;
             }
@@ -847,12 +933,12 @@ export function makePiAdapter(
       context: PiSessionContext,
       commandName: string,
       command: Record<string, unknown>,
-    ): Effect.Effect<void, ProviderAdapterRequestError> => {
+    ): Effect.Effect<unknown, ProviderAdapterRequestError> => {
       let pendingCommandId: string | undefined;
       return Effect.gen(function* () {
         const commandId = stringField(command, "id") ?? `pi-${commandName}-${yield* nextUuid}`;
         pendingCommandId = commandId;
-        const deferred = yield* Deferred.make<void, ProviderAdapterRequestError>();
+        const deferred = yield* Deferred.make<unknown, ProviderAdapterRequestError>();
         pendingResponses.set(commandId, {
           command: commandName,
           deferred,
@@ -861,7 +947,7 @@ export function makePiAdapter(
           ...command,
           id: commandId,
         });
-        yield* Deferred.await(deferred).pipe(
+        return yield* Deferred.await(deferred).pipe(
           Effect.timeoutOption(PI_COMMAND_RESPONSE_TIMEOUT),
           Effect.flatMap(
             Option.match({
@@ -1154,6 +1240,69 @@ export function makePiAdapter(
         });
       });
 
+    const readThread: PiAdapterShape["readThread"] = Effect.fn("readThread")(function* (threadId) {
+      const context = yield* getSessionContext(threadId);
+      const data = yield* writeCommandAndAwaitResponse(context, "get_messages", {
+        type: "get_messages",
+      });
+      const messages = yield* piMessagesFromRpcData("get_messages", data);
+
+      return {
+        threadId,
+        turns: buildPiThreadTurns(messages),
+      };
+    });
+
+    const rollbackThread: PiAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
+      function* (threadId, numTurns) {
+        if (!Number.isInteger(numTurns) || numTurns < 1) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "rollbackThread",
+            issue: "numTurns must be an integer >= 1.",
+          });
+        }
+
+        const context = yield* getSessionContext(threadId);
+        if (context.activeTurnId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "rollbackThread",
+            detail: "Pi session has an active turn; interrupt it before rolling back.",
+          });
+        }
+
+        const forkMessagesData = yield* writeCommandAndAwaitResponse(context, "get_fork_messages", {
+          type: "get_fork_messages",
+        });
+        const forkMessages = yield* piForkMessagesFromRpcData(forkMessagesData);
+        const targetIndex = forkMessages.length - numTurns - 1;
+        const target = targetIndex >= 0 ? forkMessages[targetIndex] : undefined;
+        if (!target) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "rollbackThread",
+            detail: `Cannot rollback Pi thread by ${numTurns} turn(s): no previous fork point is available.`,
+          });
+        }
+
+        const forkData = yield* writeCommandAndAwaitResponse(context, "fork", {
+          type: "fork",
+          entryId: target.entryId,
+        });
+        const forkResult = yield* piForkResultFromRpcData(forkData);
+        if (forkResult.cancelled) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "rollbackThread",
+            detail: "Pi rollback fork was cancelled.",
+          });
+        }
+
+        return yield* readThread(threadId);
+      },
+    );
+
     return {
       provider: PROVIDER,
       capabilities: {
@@ -1170,8 +1319,8 @@ export function makePiAdapter(
       listSessions: () =>
         Effect.succeed(Array.from(sessions.values()).map((entry) => entry.session)),
       hasSession: (threadId) => Effect.succeed(sessions.has(threadId)),
-      readThread: () => Effect.fail(piAdapterUnavailable("readThread")),
-      rollbackThread: () => Effect.fail(piAdapterUnavailable("rollbackThread")),
+      readThread,
+      rollbackThread,
       stopAll: () =>
         Effect.forEach(Array.from(sessions.keys()), (threadId) => stopSession(threadId), {
           discard: true,

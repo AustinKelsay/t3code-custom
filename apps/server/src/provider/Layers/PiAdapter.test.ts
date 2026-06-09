@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -309,6 +310,169 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
       });
       const sessions = yield* adapter.listSessions();
       assert.strictEqual(sessions[0]?.model, "spark-ingress/alpha");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads Pi messages as thread turns grouped by user prompts", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-read-messages");
+      const messages = [
+        { role: "user", content: "First prompt", timestamp: 10 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "First answer" }],
+          timestamp: 11,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: "ok",
+          timestamp: 12,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Second prompt" }],
+          timestamp: 13,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Second answer" }],
+          timestamp: 14,
+        },
+      ];
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const readFiber = yield* adapter.readThread(threadId).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const getMessagesCommand = findCommand(stdinLines, "get_messages");
+      assert.deepStrictEqual(scrubCommandId(getMessagesCommand), {
+        id: "<command-id>",
+        type: "get_messages",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: getMessagesCommand.id,
+          type: "response",
+          command: "get_messages",
+          success: true,
+          data: { messages },
+        }),
+      );
+
+      const snapshot = yield* Fiber.join(readFiber);
+
+      assert.strictEqual(snapshot.threadId, threadId);
+      assert.strictEqual(snapshot.turns.length, 2);
+      assert.strictEqual(snapshot.turns[0]?.id, TurnId.make("pi-history-turn-0"));
+      assert.strictEqual(snapshot.turns[1]?.id, TurnId.make("pi-history-turn-1"));
+      assert.deepStrictEqual(snapshot.turns[0]?.items, messages.slice(0, 3));
+      assert.deepStrictEqual(snapshot.turns[1]?.items, messages.slice(3));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rolls back a Pi thread by forking from the previous user entry", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-rollback-fork");
+      const messagesAfterRollback = [
+        { role: "user", content: "First prompt", timestamp: 10 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "First answer" }],
+          timestamp: 11,
+        },
+        { role: "user", content: "Second prompt", timestamp: 12 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Second answer" }],
+          timestamp: 13,
+        },
+      ];
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const rollbackFiber = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const forkMessagesCommand = findCommand(stdinLines, "get_fork_messages");
+      assert.deepStrictEqual(scrubCommandId(forkMessagesCommand), {
+        id: "<command-id>",
+        type: "get_fork_messages",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: forkMessagesCommand.id,
+          type: "response",
+          command: "get_fork_messages",
+          success: true,
+          data: {
+            messages: [
+              { entryId: "entry-1", text: "First prompt" },
+              { entryId: "entry-2", text: "Second prompt" },
+              { entryId: "entry-3", text: "Third prompt" },
+            ],
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const forkCommand = findCommand(stdinLines, "fork");
+      assert.deepStrictEqual(scrubCommandId(forkCommand), {
+        id: "<command-id>",
+        type: "fork",
+        entryId: "entry-2",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: forkCommand.id,
+          type: "response",
+          command: "fork",
+          success: true,
+          data: {
+            text: "Second prompt",
+            cancelled: false,
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const getMessagesCommand = findCommand(stdinLines, "get_messages");
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: getMessagesCommand.id,
+          type: "response",
+          command: "get_messages",
+          success: true,
+          data: { messages: messagesAfterRollback },
+        }),
+      );
+
+      const snapshot = yield* Fiber.join(rollbackFiber);
+
+      assert.strictEqual(snapshot.threadId, threadId);
+      assert.strictEqual(snapshot.turns.length, 2);
+      assert.deepStrictEqual(snapshot.turns[0]?.items, messagesAfterRollback.slice(0, 2));
+      assert.deepStrictEqual(snapshot.turns[1]?.items, messagesAfterRollback.slice(2));
     }).pipe(Effect.scoped),
   );
 
