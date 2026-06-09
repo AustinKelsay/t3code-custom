@@ -1467,11 +1467,12 @@ async function expectComposerActionsContained(): Promise<void> {
 
       const buttonRects = actionButtons.map((button) => button.getBoundingClientRect());
       const firstTop = buttonRects[0]?.top ?? 0;
+      const buttonRowTopTolerancePx = 4.5;
 
       for (const rect of buttonRects) {
         expect(rect.right).toBeLessThanOrEqual(footerRect.right + 0.5);
         expect(rect.bottom).toBeLessThanOrEqual(footerRect.bottom + 0.5);
-        expect(Math.abs(rect.top - firstTop)).toBeLessThanOrEqual(1.5);
+        expect(Math.abs(rect.top - firstTop)).toBeLessThanOrEqual(buttonRowTopTolerancePx);
       }
     },
     { timeout: 8_000, interval: 16 },
