@@ -1,9 +1,4 @@
-import {
-  PiSettings,
-  ProviderDriverKind,
-  TextGenerationError,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { PiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -13,7 +8,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import { checkPiProviderStatus, makePendingPiProvider } from "../Layers/PiProvider.ts";
@@ -60,21 +55,6 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
-const piTextGenerationUnavailable = (operation: string) =>
-  new TextGenerationError({
-    operation,
-    detail: "Pi text generation is not implemented yet.",
-  });
-
-function makeUnsupportedPiTextGeneration(): TextGenerationShape {
-  return {
-    generateCommitMessage: () => Effect.fail(piTextGenerationUnavailable("generateCommitMessage")),
-    generatePrContent: () => Effect.fail(piTextGenerationUnavailable("generatePrContent")),
-    generateBranchName: () => Effect.fail(piTextGenerationUnavailable("generateBranchName")),
-    generateThreadTitle: () => Effect.fail(piTextGenerationUnavailable("generateThreadTitle")),
-  };
-}
-
 export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -113,7 +93,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         instanceId,
         environment: processEnv,
       });
-      const textGeneration = makeUnsupportedPiTextGeneration();
+      const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
       const checkProvider = checkPiProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
