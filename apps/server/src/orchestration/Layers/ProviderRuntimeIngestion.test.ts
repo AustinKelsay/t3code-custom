@@ -122,6 +122,9 @@ function createProviderServiceHarness() {
       });
     },
     rollbackConversation: () => unsupported(),
+    cloneConversation: () => unsupported(),
+    compactConversation: () => unsupported(),
+    refreshConversationStats: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

@@ -55,7 +55,10 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.session-clone-requested"
+      | "thread.session-compact-requested"
+      | "thread.session-stats-refresh-requested";
   }
 >;
 
@@ -148,6 +151,15 @@ function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServic
   return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
 }
 
+function isNativeSteerActiveTurnRaceError(cause: Cause.Cause<ProviderServiceError>): boolean {
+  const error = findProviderAdapterRequestError(cause);
+  const detail = (error?.detail ?? Cause.pretty(cause)).toLowerCase();
+  return (
+    detail.includes("does not have an active turn to steer") ||
+    (detail.includes("active turn") && detail.includes("does not match expected turn"))
+  );
+}
+
 function stalePendingRequestDetail(
   requestKind: "approval" | "user-input",
   requestId: string,
@@ -215,7 +227,10 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.session.clone.failed"
+      | "provider.session.compact.failed"
+      | "provider.session.stats.refresh.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -942,9 +957,14 @@ const make = Effect.gen(function* () {
         input: event.payload.text,
       })
       .pipe(
-        Effect.catchCause((cause) =>
-          dispatchSteerFailure(formatFailureDetail(cause)).pipe(Effect.as(null)),
-        ),
+        Effect.catchCause((cause) => {
+          const detail = formatFailureDetail(cause);
+          return (
+            isNativeSteerActiveTurnRaceError(cause)
+              ? dispatchSteerFallbackToQueue(detail)
+              : dispatchSteerFailure(detail)
+          ).pipe(Effect.as(null));
+        }),
       );
     if (result === null) {
       return;
@@ -1081,6 +1101,66 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processSessionCloneRequested = Effect.fn("processSessionCloneRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.session-clone-requested" }>,
+  ) {
+    yield* providerService.cloneConversation({ threadId: event.payload.threadId }).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.session.clone.failed",
+          summary: "Provider session clone failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
+  const processSessionCompactRequested = Effect.fn("processSessionCompactRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.session-compact-requested" }>,
+  ) {
+    yield* providerService
+      .compactConversation({
+        threadId: event.payload.threadId,
+        ...(event.payload.customInstructions !== undefined
+          ? { customInstructions: event.payload.customInstructions }
+          : {}),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.session.compact.failed",
+            summary: "Provider session compaction failed",
+            detail: formatFailureDetail(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+  });
+
+  const processSessionStatsRefreshRequested = Effect.fn("processSessionStatsRefreshRequested")(
+    function* (
+      event: Extract<ProviderIntentEvent, { type: "thread.session-stats-refresh-requested" }>,
+    ) {
+      yield* providerService.refreshConversationStats({ threadId: event.payload.threadId }).pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.session.stats.refresh.failed",
+            summary: "Provider session stats refresh failed",
+            detail: formatFailureDetail(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+    },
+  );
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1124,6 +1204,15 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.session-clone-requested":
+        yield* processSessionCloneRequested(event);
+        return;
+      case "thread.session-compact-requested":
+        yield* processSessionCompactRequested(event);
+        return;
+      case "thread.session-stats-refresh-requested":
+        yield* processSessionStatsRefreshRequested(event);
+        return;
     }
   });
 
@@ -1151,7 +1240,10 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.session-clone-requested" ||
+        event.type === "thread.session-compact-requested" ||
+        event.type === "thread.session-stats-refresh-requested"
       ) {
         return yield* worker.enqueue(event);
       }

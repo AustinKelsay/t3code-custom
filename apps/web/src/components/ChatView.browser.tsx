@@ -4703,6 +4703,95 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("dispatches active session actions from the command palette", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-session-actions" as MessageId,
+        targetText: "command palette session actions",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    async function runPaletteAction(title: string, query: string, expectedType: string) {
+      const priorDispatchCount = wsRequests.filter(
+        (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+      ).length;
+
+      await openCommandPaletteFromTrigger();
+      const palette = page.getByTestId("command-palette");
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill(query);
+      await vi.waitFor(
+        () => {
+          expect(
+            Array.from(document.querySelectorAll('[data-testid="command-palette"] *')).some(
+              (element) => element.textContent === title,
+            ),
+          ).toBe(true);
+        },
+        { timeout: 3_000, interval: 16 },
+      );
+      await palette.getByText(title, { exact: true }).click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequests = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          expect(dispatchRequests.length).toBeGreaterThan(priorDispatchCount);
+          expect(dispatchRequests.at(-1)).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: expectedType,
+            threadId: THREAD_ID,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForLayout();
+    }
+
+    try {
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
+
+      await runPaletteAction("Compact current session", "compact", "thread.session.compact");
+      await runPaletteAction("Refresh session stats", "stats", "thread.session.stats.refresh");
+      await runPaletteAction("Clone current session", "clone", "thread.session.clone");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("adds a project from browse mode with Enter when no directory is highlighted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

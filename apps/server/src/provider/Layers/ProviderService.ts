@@ -73,6 +73,15 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
+const ProviderThreadOperationInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
+const ProviderCompactConversationInput = Schema.Struct({
+  threadId: ThreadId,
+  customInstructions: Schema.optional(Schema.String),
+});
+
 function toValidationError(
   operation: string,
   issue: string,
@@ -1025,6 +1034,163 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const cloneConversation: ProviderServiceShape["cloneConversation"] = Effect.fn(
+    "cloneConversation",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.cloneConversation",
+      schema: ProviderThreadOperationInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.cloneConversation",
+        allowRecovery: true,
+      });
+      metricProvider = routed.adapter.provider;
+      if (!routed.adapter.cloneThread) {
+        return yield* toValidationError(
+          "ProviderService.cloneConversation",
+          `Provider '${routed.adapter.provider}' does not support session cloning.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "clone-conversation",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+      });
+      yield* routed.adapter.cloneThread(routed.threadId);
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        runtimePayload: {
+          lastRuntimeEvent: "provider.cloneConversation",
+          lastRuntimeEventAt: yield* nowIso,
+        },
+      });
+      yield* analytics.record("provider.conversation.cloned", {
+        provider: routed.adapter.provider,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "clone",
+          }),
+      }),
+    );
+  });
+
+  const compactConversation: ProviderServiceShape["compactConversation"] = Effect.fn(
+    "compactConversation",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.compactConversation",
+      schema: ProviderCompactConversationInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.compactConversation",
+        allowRecovery: true,
+      });
+      metricProvider = routed.adapter.provider;
+      if (!routed.adapter.compactThread) {
+        return yield* toValidationError(
+          "ProviderService.compactConversation",
+          `Provider '${routed.adapter.provider}' does not support manual compaction.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "compact-conversation",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+      });
+      const customInstructions = input.customInstructions?.trim();
+      yield* routed.adapter.compactThread(
+        routed.threadId,
+        customInstructions ? { customInstructions } : {},
+      );
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        runtimePayload: {
+          lastRuntimeEvent: "provider.compactConversation",
+          lastRuntimeEventAt: yield* nowIso,
+        },
+      });
+      yield* analytics.record("provider.conversation.compacted", {
+        provider: routed.adapter.provider,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "compact",
+          }),
+      }),
+    );
+  });
+
+  const refreshConversationStats: ProviderServiceShape["refreshConversationStats"] = Effect.fn(
+    "refreshConversationStats",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.refreshConversationStats",
+      schema: ProviderThreadOperationInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.refreshConversationStats",
+        allowRecovery: true,
+      });
+      metricProvider = routed.adapter.provider;
+      if (!routed.adapter.refreshThreadStats) {
+        return yield* toValidationError(
+          "ProviderService.refreshConversationStats",
+          `Provider '${routed.adapter.provider}' does not support session stats refresh.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "refresh-conversation-stats",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+      });
+      yield* routed.adapter.refreshThreadStats(routed.threadId);
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        runtimePayload: {
+          lastRuntimeEvent: "provider.refreshConversationStats",
+          lastRuntimeEventAt: yield* nowIso,
+        },
+      });
+      yield* analytics.record("provider.conversation.stats_refreshed", {
+        provider: routed.adapter.provider,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "stats-refresh",
+          }),
+      }),
+    );
+  });
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
@@ -1093,6 +1259,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    cloneConversation,
+    compactConversation,
+    refreshConversationStats,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

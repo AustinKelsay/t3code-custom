@@ -1,0 +1,1971 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import {
+  ApprovalRequestId,
+  PiSettings,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { makePiAdapter } from "./PiAdapter.ts";
+
+const decodePiSettings = Schema.decodeSync(PiSettings);
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const PI_PROVIDER = ProviderDriverKind.make("pi");
+const PI_INSTANCE = ProviderInstanceId.make("pi_default");
+
+type ChildProcessCommand = {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+};
+
+function jsonl(value: unknown): Uint8Array {
+  return encoder.encode(`${JSON.stringify(value)}\n`);
+}
+
+function makePiSettings(overrides?: Partial<PiSettings>): PiSettings {
+  return decodePiSettings({
+    enabled: true,
+    binaryPath: "fake-pi",
+    ...overrides,
+  });
+}
+
+function scrubCommandId(line: unknown): unknown {
+  return typeof line === "object" && line !== null
+    ? { ...(line as Record<string, unknown>), id: "<command-id>" }
+    : line;
+}
+
+function findCommand(lines: ReadonlyArray<unknown>, type: string): Record<string, unknown> {
+  const command = lines.find(
+    (line): line is Record<string, unknown> =>
+      typeof line === "object" && line !== null && (line as Record<string, unknown>).type === type,
+  );
+  assert.ok(command, `Expected ${type} command`);
+  return command;
+}
+
+function makePiAdapterHarness(options?: { readonly stdinWriteError?: string }) {
+  return Effect.gen(function* () {
+    const exitCode = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const stdout = yield* Queue.unbounded<Uint8Array>();
+    const stdinLines: Array<unknown> = [];
+    const commands: Array<ChildProcessCommand> = [];
+    const killCalls: Array<void> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Deferred.await(exitCode),
+          isRunning: Effect.succeed(true),
+          kill: () =>
+            Effect.gen(function* () {
+              killCalls.push(undefined);
+              yield* Queue.shutdown(stdout);
+              yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(0)).pipe(
+                Effect.ignore,
+              );
+            }),
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.forEach((chunk: Uint8Array) =>
+            Effect.gen(function* () {
+              if (options?.stdinWriteError) {
+                return yield* Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "ChildProcess",
+                    method: "stdin",
+                    description: options.stdinWriteError,
+                  }),
+                );
+              }
+              yield* Effect.sync(() => {
+                for (const line of decoder.decode(chunk).trim().split(/\r?\n/)) {
+                  if (line.length > 0) {
+                    stdinLines.push(JSON.parse(line));
+                  }
+                }
+              });
+            }),
+          ),
+          stdout: Stream.fromQueue(stdout),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (ChildProcess.isStandardCommand(command)) {
+              commands.push({
+                command: command.command,
+                args: command.args,
+              });
+            }
+          }),
+        ),
+      ),
+    );
+
+    const adapter = yield* makePiAdapter(makePiSettings(), {
+      instanceId: PI_INSTANCE,
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+    return {
+      adapter,
+      commands,
+      exitCode,
+      killCalls,
+      stdinLines,
+      stdout,
+    };
+  });
+}
+
+it.layer(NodeServices.layer)("makePiAdapter", (it) => {
+  it.effect("sends a prompt to pi rpc and emits canonical streaming turn events", () =>
+    Effect.gen(function* () {
+      const { adapter, commands, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const threadId = ThreadId.make("thread-pi-basic-turn");
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "hello pi",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "message_update",
+          delta: { type: "text_delta", text: "hello from pi" },
+        }),
+      );
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", stop_reason: "complete" }));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const eventTypes = events.map((event) => event.type);
+
+      assert.deepStrictEqual(commands, [
+        {
+          command: "fake-pi",
+          args: ["--mode", "rpc", "--session-id", "thread-pi-basic-turn"],
+        },
+      ]);
+      assert.strictEqual(stdinLines.length, 1);
+      assert.deepStrictEqual(
+        typeof stdinLines[0] === "object" && stdinLines[0] !== null
+          ? { ...(stdinLines[0] as Record<string, unknown>), id: "<turn-id>" }
+          : stdinLines[0],
+        { id: "<turn-id>", type: "prompt", message: "hello pi" },
+      );
+      assert.strictEqual(session.status, "ready");
+      assert.strictEqual(turn.threadId, threadId);
+      assert.deepStrictEqual(eventTypes, [
+        "session.started",
+        "thread.started",
+        "turn.started",
+        "content.delta",
+        "turn.completed",
+      ]);
+      assert.deepStrictEqual(events[3]?.payload, {
+        streamKind: "assistant_text",
+        delta: "hello from pi",
+      });
+      assert.deepStrictEqual(events[4]?.payload, {
+        state: "completed",
+        stopReason: "complete",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("resumes a Pi session from a persisted session path", () =>
+    Effect.gen(function* () {
+      const { adapter, commands } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-resume-path");
+      const resumeCursor = {
+        schemaVersion: 1,
+        sessionId: "pi-existing-session",
+        sessionPath: "/tmp/pi-existing-session.jsonl",
+      };
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+        resumeCursor,
+      });
+
+      assert.deepStrictEqual(commands, [
+        {
+          command: "fake-pi",
+          args: ["--mode", "rpc", "--session", "/tmp/pi-existing-session.jsonl"],
+        },
+      ]);
+      assert.deepStrictEqual(session.resumeCursor, resumeCursor);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switches an active Pi RPC process to a persisted session path", () =>
+    Effect.gen(function* () {
+      const { adapter, commands, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-switch-session");
+      const resumeCursor = {
+        schemaVersion: 1,
+        sessionId: "pi-switched-session",
+        sessionPath: "/tmp/pi-switched-session.jsonl",
+      };
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const switchFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: PI_PROVIDER,
+          providerInstanceId: PI_INSTANCE,
+          runtimeMode: "approval-required",
+          cwd: "/tmp/pi-workspace",
+          resumeCursor,
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const switchCommand = findCommand(stdinLines, "switch_session");
+      assert.deepStrictEqual(scrubCommandId(switchCommand), {
+        id: "<command-id>",
+        type: "switch_session",
+        sessionPath: "/tmp/pi-switched-session.jsonl",
+      });
+      assert.strictEqual(commands.length, 1);
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: switchCommand.id,
+          type: "response",
+          command: "switch_session",
+          success: true,
+          data: { cancelled: false },
+        }),
+      );
+
+      const session = yield* Fiber.join(switchFiber);
+
+      assert.strictEqual(session.threadId, threadId);
+      assert.deepStrictEqual(session.resumeCursor, resumeCursor);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects a second prompt while a Pi turn is still active", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-overlapping-turn");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "second prompt",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.method, "sendTurn");
+      assert.strictEqual(error.detail, "Pi session already has an active turn.");
+      assert.strictEqual(stdinLines.length, 1);
+      assert.deepStrictEqual(
+        typeof stdinLines[0] === "object" && stdinLines[0] !== null
+          ? { ...(stdinLines[0] as Record<string, unknown>), id: "<turn-id>" }
+          : stdinLines[0],
+        { id: "<turn-id>", type: "prompt", message: "first prompt" },
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("switches Pi models before sending a turn with a different selected model", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-model-switch");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "use alpha",
+          modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha"),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const setModelCommand = findCommand(stdinLines, "set_model");
+      assert.deepStrictEqual(scrubCommandId(setModelCommand), {
+        id: "<command-id>",
+        type: "set_model",
+        provider: "spark-ingress",
+        modelId: "alpha",
+      });
+      assert.strictEqual(
+        stdinLines.some(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type === "prompt",
+        ),
+        false,
+      );
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: setModelCommand.id,
+          type: "response",
+          command: "set_model",
+          success: true,
+          data: {
+            provider: "spark-ingress",
+            id: "alpha",
+          },
+        }),
+      );
+
+      const turn = yield* Fiber.join(turnFiber);
+      const promptCommand = findCommand(stdinLines, "prompt");
+      assert.strictEqual(turn.threadId, threadId);
+      assert.deepStrictEqual(scrubCommandId(promptCommand), {
+        id: "<command-id>",
+        type: "prompt",
+        message: "use alpha",
+      });
+      const sessions = yield* adapter.listSessions();
+      assert.strictEqual(sessions[0]?.model, "spark-ingress/alpha");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sets Pi thinking level before sending a turn", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-thinking-level");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+        modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha"),
+      });
+
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "think harder",
+          modelSelection: createModelSelection(PI_INSTANCE, "spark-ingress/alpha", [
+            { id: "thinkingLevel", value: "high" },
+          ]),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const thinkingCommand = findCommand(stdinLines, "set_thinking_level");
+      assert.deepStrictEqual(scrubCommandId(thinkingCommand), {
+        id: "<command-id>",
+        type: "set_thinking_level",
+        level: "high",
+      });
+      assert.strictEqual(
+        stdinLines.some(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type === "prompt",
+        ),
+        false,
+      );
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: thinkingCommand.id,
+          type: "response",
+          command: "set_thinking_level",
+          success: true,
+        }),
+      );
+
+      const turn = yield* Fiber.join(turnFiber);
+      const promptCommand = findCommand(stdinLines, "prompt");
+      assert.strictEqual(turn.threadId, threadId);
+      assert.deepStrictEqual(scrubCommandId(promptCommand), {
+        id: "<command-id>",
+        type: "prompt",
+        message: "think harder",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads Pi messages as thread turns grouped by user prompts", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-read-messages");
+      const messages = [
+        { role: "user", content: "First prompt", timestamp: 10 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "First answer" }],
+          timestamp: 11,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: "ok",
+          timestamp: 12,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Second prompt" }],
+          timestamp: 13,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Second answer" }],
+          timestamp: 14,
+        },
+      ];
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const readFiber = yield* adapter.readThread(threadId).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const getMessagesCommand = findCommand(stdinLines, "get_messages");
+      assert.deepStrictEqual(scrubCommandId(getMessagesCommand), {
+        id: "<command-id>",
+        type: "get_messages",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: getMessagesCommand.id,
+          type: "response",
+          command: "get_messages",
+          success: true,
+          data: { messages },
+        }),
+      );
+
+      const snapshot = yield* Fiber.join(readFiber);
+
+      assert.strictEqual(snapshot.threadId, threadId);
+      assert.strictEqual(snapshot.turns.length, 2);
+      assert.strictEqual(snapshot.turns[0]?.id, TurnId.make("pi-history-turn-0"));
+      assert.strictEqual(snapshot.turns[1]?.id, TurnId.make("pi-history-turn-1"));
+      assert.deepStrictEqual(snapshot.turns[0]?.items, messages.slice(0, 3));
+      assert.deepStrictEqual(snapshot.turns[1]?.items, messages.slice(3));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rolls back a Pi thread by forking from the previous user entry", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-rollback-fork");
+      const messagesAfterRollback = [
+        { role: "user", content: "First prompt", timestamp: 10 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "First answer" }],
+          timestamp: 11,
+        },
+        { role: "user", content: "Second prompt", timestamp: 12 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Second answer" }],
+          timestamp: 13,
+        },
+      ];
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const rollbackFiber = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const forkMessagesCommand = findCommand(stdinLines, "get_fork_messages");
+      assert.deepStrictEqual(scrubCommandId(forkMessagesCommand), {
+        id: "<command-id>",
+        type: "get_fork_messages",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: forkMessagesCommand.id,
+          type: "response",
+          command: "get_fork_messages",
+          success: true,
+          data: {
+            messages: [
+              { entryId: "entry-1", text: "First prompt" },
+              { entryId: "entry-2", text: "Second prompt" },
+              { entryId: "entry-3", text: "Third prompt" },
+            ],
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const forkCommand = findCommand(stdinLines, "fork");
+      assert.deepStrictEqual(scrubCommandId(forkCommand), {
+        id: "<command-id>",
+        type: "fork",
+        entryId: "entry-2",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: forkCommand.id,
+          type: "response",
+          command: "fork",
+          success: true,
+          data: {
+            text: "Second prompt",
+            cancelled: false,
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const getMessagesCommand = findCommand(stdinLines, "get_messages");
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: getMessagesCommand.id,
+          type: "response",
+          command: "get_messages",
+          success: true,
+          data: { messages: messagesAfterRollback },
+        }),
+      );
+
+      const snapshot = yield* Fiber.join(rollbackFiber);
+
+      assert.strictEqual(snapshot.threadId, threadId);
+      assert.strictEqual(snapshot.turns.length, 2);
+      assert.deepStrictEqual(snapshot.turns[0]?.items, messagesAfterRollback.slice(0, 2));
+      assert.deepStrictEqual(snapshot.turns[1]?.items, messagesAfterRollback.slice(2));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("clones the active Pi session through native RPC", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-clone");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const cloneFiber = yield* adapter.cloneThread!(threadId).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const cloneCommand = findCommand(stdinLines, "clone");
+      assert.deepStrictEqual(scrubCommandId(cloneCommand), {
+        id: "<command-id>",
+        type: "clone",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: cloneCommand.id,
+          type: "response",
+          command: "clone",
+          success: true,
+          data: {
+            cancelled: false,
+          },
+        }),
+      );
+
+      yield* Fiber.join(cloneFiber);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("compacts Pi context and emits compacted state plus refreshed stats", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-compact");
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const compactFiber = yield* adapter.compactThread!(threadId, {
+        customInstructions: "Keep deployment details.",
+      }).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const compactCommand = findCommand(stdinLines, "compact");
+      assert.deepStrictEqual(scrubCommandId(compactCommand), {
+        id: "<command-id>",
+        type: "compact",
+        customInstructions: "Keep deployment details.",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: compactCommand.id,
+          type: "response",
+          command: "compact",
+          success: true,
+          data: {
+            cancelled: false,
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const statsCommand = findCommand(stdinLines, "get_session_stats");
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: statsCommand.id,
+          type: "response",
+          command: "get_session_stats",
+          success: true,
+          data: {
+            sessionFile: "/tmp/pi-session.jsonl",
+            sessionId: "session-pi-compact",
+            userMessages: 3,
+            assistantMessages: 3,
+            toolCalls: 2,
+            toolResults: 2,
+            totalMessages: 10,
+            tokens: {
+              input: 1200,
+              output: 800,
+              cacheRead: 300,
+              cacheWrite: 100,
+              total: 2400,
+            },
+            cost: 0.0123,
+            contextUsage: {
+              used: 2400,
+              limit: 128000,
+              percentage: 1.875,
+            },
+          },
+        }),
+      );
+
+      yield* Fiber.join(compactFiber);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "thread.state.changed", "thread.token-usage.updated"],
+      );
+      assert.deepStrictEqual(events[2]?.payload, {
+        state: "compacted",
+        detail: {
+          source: "manual",
+        },
+      });
+      assert.deepStrictEqual(events[3]?.payload, {
+        usage: {
+          usedTokens: 2400,
+          totalProcessedTokens: 2400,
+          maxTokens: 128000,
+          inputTokens: 1200,
+          cachedInputTokens: 400,
+          outputTokens: 800,
+          toolUses: 2,
+          totalCostUsd: 0.0123,
+          compactsAutomatically: true,
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("steers an active Pi turn after Pi accepts the native steer command", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-native-steer");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      const steerFiber = yield* adapter
+        .steerTurn({
+          threadId,
+          expectedTurnId: turn.turnId,
+          input: "use the smaller refactor",
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.deepStrictEqual(stdinLines.slice(1, 3).map(scrubCommandId), [
+        { id: "<command-id>", type: "set_steering_mode", mode: "one-at-a-time" },
+        { id: "<command-id>", type: "set_follow_up_mode", mode: "one-at-a-time" },
+      ]);
+      const steerCommand = findCommand(stdinLines, "steer");
+      assert.deepStrictEqual(scrubCommandId(steerCommand), {
+        id: "<command-id>",
+        type: "steer",
+        message: "use the smaller refactor",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: steerCommand.id,
+          type: "response",
+          command: "steer",
+          success: true,
+        }),
+      );
+
+      assert.deepStrictEqual(yield* Fiber.join(steerFiber), {
+        threadId,
+        turnId: turn.turnId,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails native steer when Pi rejects the command response", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-native-steer-rejected");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      const steerFiber = yield* adapter
+        .steerTurn({
+          threadId,
+          expectedTurnId: turn.turnId,
+          input: "use the smaller refactor",
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      const steerCommand = findCommand(stdinLines, "steer");
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: steerCommand.id,
+          type: "response",
+          command: "steer",
+          success: false,
+          error: "Agent is not streaming.",
+        }),
+      );
+
+      const error = yield* Fiber.join(steerFiber);
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.method, "pi/steer");
+      assert.strictEqual(error.detail, "Agent is not streaming.");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects native steer when the active turn no longer matches", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-native-steer-stale");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", stop_reason: "complete" }));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const error = yield* adapter
+        .steerTurn({
+          threadId,
+          expectedTurnId: turn.turnId,
+          input: "too late",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.method, "steerTurn");
+      assert.strictEqual(error.detail, "Pi session does not have an active turn to steer.");
+      assert.strictEqual(
+        stdinLines.filter(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type !== "get_session_stats",
+        ).length,
+        1,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps Pi queue_update events to visible queue snapshot updates", () =>
+    Effect.gen(function* () {
+      const { adapter, stdout } = yield* makePiAdapterHarness();
+      const queueEvents: ProviderRuntimeEvent[] = [];
+      const queueFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "item.updated" && event.itemId === "pi-queue") {
+            queueEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-queue-update");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "queue_update",
+          steering: ["Focus on error handling"],
+          followUp: ["After that, summarize the result"],
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "queue_update",
+          steering: [],
+          followUp: [],
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(queueFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(queueEvents.length, 2);
+      assert.strictEqual(queueEvents[0]?.turnId, turn.turnId);
+      assert.deepStrictEqual(queueEvents[0]?.payload, {
+        itemType: "dynamic_tool_call",
+        status: "inProgress",
+        title: "Pi queue",
+        detail: "Steering: Focus on error handling\nFollow-up: After that, summarize the result",
+        data: {
+          id: "pi-queue",
+          steering: ["Focus on error handling"],
+          followUp: ["After that, summarize the result"],
+        },
+      });
+      assert.deepStrictEqual(queueEvents[1]?.payload, {
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Pi queue",
+        detail: "Pi queue is empty.",
+        data: {
+          id: "pi-queue",
+          steering: [],
+          followUp: [],
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi confirm extension UI requests through approval responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const approvalEvents: ProviderRuntimeEvent[] = [];
+      const approvalFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "request.opened" || event.type === "request.resolved") {
+            approvalEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-confirm-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-1",
+          method: "confirm",
+          title: "Allow command?",
+          message: "Run rm -rf build?",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(approvalEvents.length, 1);
+      assert.strictEqual(approvalEvents[0]?.type, "request.opened");
+      assert.strictEqual(approvalEvents[0]?.requestId, "pi-confirm-1");
+      assert.strictEqual(approvalEvents[0]?.turnId, turn.turnId);
+      assert.deepStrictEqual(approvalEvents[0]?.payload, {
+        requestType: "command_execution_approval",
+        detail: "Allow command?\nRun rm -rf build?",
+        args: {
+          id: "pi-confirm-1",
+          method: "confirm",
+          title: "Allow command?",
+          message: "Run rm -rf build?",
+        },
+      });
+
+      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("pi-confirm-1"), "accept");
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(approvalFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-confirm-1",
+        confirmed: true,
+      });
+      assert.strictEqual(approvalEvents[1]?.type, "request.resolved");
+      assert.deepStrictEqual(approvalEvents[1]?.payload, {
+        requestType: "command_execution_approval",
+        decision: "accept",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps cancelled Pi confirm approvals to cancelled extension UI responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-confirm-cancelled");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-cancel",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("pi-confirm-cancel"),
+        "cancel",
+      );
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-confirm-cancel",
+        cancelled: true,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi select extension UI requests through user-input responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const userInputEvents: ProviderRuntimeEvent[] = [];
+      const userInputFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "user-input.requested" || event.type === "user-input.resolved") {
+            userInputEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-select-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-select-1",
+          method: "select",
+          title: "Choose a backend",
+          options: ["SQLite", "Postgres"],
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(userInputEvents[0]?.type, "user-input.requested");
+      assert.strictEqual(userInputEvents[0]?.requestId, "pi-select-1");
+      assert.deepStrictEqual(userInputEvents[0]?.payload, {
+        questions: [
+          {
+            id: "value",
+            header: "Choose a backend",
+            question: "Choose a backend",
+            options: [
+              { label: "SQLite", description: "SQLite" },
+              { label: "Postgres", description: "Postgres" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      });
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-select-1"), {
+        value: "Postgres",
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(userInputFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-select-1",
+        value: "Postgres",
+      });
+      assert.deepStrictEqual(userInputEvents[1]?.payload, {
+        answers: {
+          value: "Postgres",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("bridges Pi input extension UI requests through user-input responses", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const userInputEvents: ProviderRuntimeEvent[] = [];
+      const userInputFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "user-input.requested" || event.type === "user-input.resolved") {
+            userInputEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-input-bridge");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-input-1",
+          method: "input",
+          title: "API key",
+          placeholder: "Paste token",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      assert.strictEqual(userInputEvents[0]?.type, "user-input.requested");
+      assert.deepStrictEqual(userInputEvents[0]?.payload, {
+        questions: [
+          {
+            id: "value",
+            header: "API key",
+            question: "Paste token",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      });
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-input-1"), {
+        value: "secret-token",
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(userInputFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(stdinLines.at(-1), {
+        type: "extension_ui_response",
+        id: "pi-input-1",
+        value: "secret-token",
+      });
+      assert.deepStrictEqual(userInputEvents[1]?.payload, {
+        answers: {
+          value: "secret-token",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("cleans up timed-out Pi extension UI requests without writing a response", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const approvalEvents: ProviderRuntimeEvent[] = [];
+      const approvalFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "request.opened" || event.type === "request.resolved") {
+            approvalEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-timeout-cleanup");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-timeout-1",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+          timeout: 10,
+        }),
+      );
+      yield* TestClock.adjust(Duration.millis(10));
+      yield* Effect.yieldNow;
+
+      const error = yield* adapter
+        .respondToRequest(threadId, ApprovalRequestId.make("pi-timeout-1"), "accept")
+        .pipe(Effect.flip);
+      yield* Fiber.interrupt(approvalFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(approvalEvents.length, 2);
+      assert.strictEqual(approvalEvents[0]?.type, "request.opened");
+      assert.strictEqual(approvalEvents[1]?.type, "request.resolved");
+      assert.deepStrictEqual(approvalEvents[1]?.payload, {
+        requestType: "command_execution_approval",
+        decision: "cancel",
+      });
+      assert.strictEqual(stdinLines.length, 1);
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.detail, "Unknown pending Pi extension UI request: pi-timeout-1");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("handles multiple concurrent Pi extension UI requests independently", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-concurrent-ui");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-confirm-concurrent",
+          method: "confirm",
+          title: "Confirm",
+          message: "Proceed?",
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "extension_ui_request",
+          id: "pi-input-concurrent",
+          method: "input",
+          title: "Name",
+          placeholder: "Name",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("pi-input-concurrent"), {
+        value: "Ada",
+      });
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("pi-confirm-concurrent"),
+        "decline",
+      );
+
+      assert.deepStrictEqual(stdinLines.slice(-2), [
+        {
+          type: "extension_ui_response",
+          id: "pi-input-concurrent",
+          value: "Ada",
+        },
+        {
+          type: "extension_ui_response",
+          id: "pi-confirm-concurrent",
+          confirmed: false,
+        },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("interrupts an active Pi turn with the native abort command", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const abortedEvents: ProviderRuntimeEvent[] = [];
+      const abortedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.aborted") {
+            abortedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-native-interrupt");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "keep working",
+      });
+
+      const interruptFiber = yield* adapter.interruptTurn(threadId).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const abortCommand = findCommand(stdinLines, "abort");
+      assert.deepStrictEqual(scrubCommandId(abortCommand), { id: "<command-id>", type: "abort" });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: abortCommand.id,
+          type: "response",
+          command: "abort",
+          success: true,
+        }),
+      );
+      yield* Fiber.join(interruptFiber);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      const sessions = yield* adapter.listSessions();
+      yield* Fiber.interrupt(abortedFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(sessions[0]?.status, "ready");
+      assert.strictEqual(sessions[0]?.activeTurnId, undefined);
+      assert.deepStrictEqual(
+        abortedEvents.map((event) => event.type),
+        ["turn.aborted"],
+      );
+      assert.strictEqual(abortedEvents[0]?.turnId, turn.turnId);
+      assert.deepStrictEqual(abortedEvents[0]?.payload, {
+        reason: "Pi turn interrupted.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a second prompt on the same Pi session after the first turn completes", () =>
+    Effect.gen(function* () {
+      const { adapter, commands, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const completedEvents: ProviderRuntimeEvent[] = [];
+      const completedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.completed") {
+            completedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-second-turn");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+      });
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", stop_reason: "complete" }));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second prompt",
+      });
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", stop_reason: "complete" }));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      const sessions = yield* adapter.listSessions();
+      yield* Fiber.interrupt(completedFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(commands.length, 1);
+      assert.deepStrictEqual(
+        stdinLines
+          .filter(
+            (line) =>
+              typeof line === "object" &&
+              line !== null &&
+              (line as Record<string, unknown>).type === "prompt",
+          )
+          .map((line) =>
+            typeof line === "object" && line !== null
+              ? { ...(line as Record<string, unknown>), id: "<turn-id>" }
+              : line,
+          ),
+        [
+          { id: "<turn-id>", type: "prompt", message: "first prompt" },
+          { id: "<turn-id>", type: "prompt", message: "second prompt" },
+        ],
+      );
+      assert.strictEqual(secondTurn.threadId, threadId);
+      assert.strictEqual(sessions[0]?.status, "ready");
+      assert.strictEqual(sessions[0]?.activeTurnId, undefined);
+      assert.deepStrictEqual(
+        completedEvents.map((event) => event.type),
+        ["turn.completed", "turn.completed"],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rolls a Pi session back to ready when Pi rejects a prompt response", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const abortedEvents: ProviderRuntimeEvent[] = [];
+      const abortedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.aborted") {
+            abortedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-prompt-rejected");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "will be rejected",
+      });
+      const command = stdinLines[0];
+      const commandId =
+        typeof command === "object" && command !== null
+          ? String((command as Record<string, unknown>).id)
+          : "missing-command-id";
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: commandId,
+          type: "response",
+          command: "prompt",
+          success: false,
+          error: "Pi is already streaming.",
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      const sessions = yield* adapter.listSessions();
+      yield* Fiber.interrupt(abortedFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(typeof commandId, "string");
+      assert.notStrictEqual(commandId, "undefined");
+      assert.strictEqual(sessions[0]?.status, "ready");
+      assert.strictEqual(sessions[0]?.activeTurnId, undefined);
+      assert.strictEqual(sessions[0]?.lastError, "Pi is already streaming.");
+      assert.deepStrictEqual(
+        abortedEvents.map((event) => event.type),
+        ["turn.aborted"],
+      );
+      assert.deepStrictEqual(abortedEvents[0]?.payload, {
+        reason: "Pi is already streaming.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rolls a Pi session back to ready when writing a prompt fails", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines } = yield* makePiAdapterHarness({
+        stdinWriteError: "stdin closed",
+      });
+      const abortedEvents: ProviderRuntimeEvent[] = [];
+      const abortedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.aborted") {
+            abortedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-stdin-failure");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "please respond",
+        })
+        .pipe(Effect.flip);
+      const sessions = yield* adapter.listSessions();
+
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(abortedFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      assert.strictEqual(error.method, "pi/stdin");
+      assert.strictEqual(error.detail, "Failed to write Pi JSONL command.");
+      assert.deepStrictEqual(stdinLines, []);
+      assert.strictEqual(sessions.length, 1);
+      assert.strictEqual(sessions[0]?.status, "ready");
+      assert.strictEqual(sessions[0]?.activeTurnId, undefined);
+      assert.strictEqual(sessions[0]?.lastError, "Failed to write Pi JSONL command.");
+      assert.deepStrictEqual(
+        abortedEvents.map((event) => event.type),
+        ["turn.aborted"],
+      );
+      assert.deepStrictEqual(abortedEvents[0]?.payload, {
+        reason: "Failed to write Pi JSONL command.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("continues reading Pi stdout after a malformed JSONL line", () =>
+    Effect.gen(function* () {
+      const { adapter, stdout } = yield* makePiAdapterHarness();
+      const completedEvents: ProviderRuntimeEvent[] = [];
+      const completedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.completed") {
+            completedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-malformed-jsonl");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "handle noisy stdout",
+      });
+
+      yield* Queue.offer(stdout, encoder.encode("{not valid json}\n"));
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", stop_reason: "complete" }));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      const sessions = yield* adapter.listSessions();
+      yield* Fiber.interrupt(completedFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(
+        completedEvents.map((event) => event.type),
+        ["turn.completed"],
+      );
+      assert.deepStrictEqual(completedEvents[0]?.payload, {
+        state: "completed",
+        stopReason: "complete",
+      });
+      assert.strictEqual(sessions[0]?.status, "ready");
+      assert.strictEqual(sessions[0]?.activeTurnId, undefined);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps pi tool execution events into canonical item lifecycle events", () =>
+    Effect.gen(function* () {
+      const { adapter, stdout } = yield* makePiAdapterHarness();
+      const toolEvents: ProviderRuntimeEvent[] = [];
+      const toolEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "item.started" || event.type === "item.completed") {
+            toolEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-tool-events");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "list files",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "tool_execution_start",
+          id: "tool-1",
+          name: "bash",
+          input: { command: "ls" },
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "tool_execution_end",
+          id: "tool-1",
+          name: "bash",
+          success: true,
+          result: "done",
+        }),
+      );
+
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(toolEventsFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(
+        toolEvents.map((event) => event.type),
+        ["item.started", "item.completed"],
+      );
+      assert.deepStrictEqual(toolEvents[0]?.payload, {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "bash",
+        data: {
+          id: "tool-1",
+          name: "bash",
+          input: { command: "ls" },
+        },
+      });
+      assert.deepStrictEqual(toolEvents[1]?.payload, {
+        itemType: "command_execution",
+        status: "completed",
+        title: "bash",
+        detail: "done",
+        data: {
+          id: "tool-1",
+          name: "bash",
+          success: true,
+          result: "done",
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps documented Pi RPC text and tool events into canonical runtime events", () =>
+    Effect.gen(function* () {
+      const { adapter, stdout } = yield* makePiAdapterHarness();
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (
+            event.type === "content.delta" ||
+            event.type === "item.started" ||
+            event.type === "item.updated" ||
+            event.type === "item.completed" ||
+            event.type === "turn.completed"
+          ) {
+            runtimeEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-documented-rpc-events");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "list files",
+      });
+
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "hello from documented pi",
+          },
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "tool_execution_start",
+          toolCallId: "call-1",
+          toolName: "bash",
+          args: { command: "ls" },
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "tool_execution_update",
+          toolCallId: "call-1",
+          toolName: "bash",
+          partialResult: {
+            content: [{ type: "text", text: "partial output" }],
+          },
+        }),
+      );
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          type: "tool_execution_end",
+          toolCallId: "call-1",
+          toolName: "bash",
+          result: {
+            content: [{ type: "text", text: "final output" }],
+          },
+          isError: false,
+        }),
+      );
+      yield* Queue.offer(stdout, jsonl({ type: "turn_end", message: {}, toolResults: [] }));
+
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(
+        runtimeEvents.map((event) => event.type),
+        ["content.delta", "item.started", "item.updated", "item.completed", "turn.completed"],
+      );
+      assert.deepStrictEqual(runtimeEvents[0]?.payload, {
+        streamKind: "assistant_text",
+        delta: "hello from documented pi",
+        contentIndex: 0,
+      });
+      assert.deepStrictEqual(runtimeEvents[1]?.payload, {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "bash",
+        data: {
+          id: "call-1",
+          name: "bash",
+          input: { command: "ls" },
+        },
+      });
+      assert.deepStrictEqual(runtimeEvents[2]?.payload, {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "bash",
+        detail: "partial output",
+        data: {
+          id: "call-1",
+          name: "bash",
+          partialResult: {
+            content: [{ type: "text", text: "partial output" }],
+          },
+        },
+      });
+      assert.deepStrictEqual(runtimeEvents[3]?.payload, {
+        itemType: "command_execution",
+        status: "completed",
+        title: "bash",
+        detail: "final output",
+        data: {
+          id: "call-1",
+          name: "bash",
+          isError: false,
+          result: {
+            content: [{ type: "text", text: "final output" }],
+          },
+        },
+      });
+      assert.deepStrictEqual(runtimeEvents[4]?.payload, {
+        state: "completed",
+        stopReason: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("marks a session exited when the pi rpc process exits unexpectedly", () =>
+    Effect.gen(function* () {
+      const { adapter, exitCode } = yield* makePiAdapterHarness();
+      const exitedEvents: ProviderRuntimeEvent[] = [];
+      const exitedFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "session.exited") {
+            exitedEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-process-exit");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(1));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(exitedFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(yield* adapter.hasSession(threadId), false);
+      assert.deepStrictEqual(
+        exitedEvents.map((event) => event.type),
+        ["session.exited"],
+      );
+      assert.deepStrictEqual(exitedEvents[0]?.payload, {
+        exitKind: "error",
+        recoverable: true,
+        reason: "Pi RPC process exited with code 1.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("aborts the active turn when the pi rpc process exits mid-turn", () =>
+    Effect.gen(function* () {
+      const { adapter, exitCode } = yield* makePiAdapterHarness();
+      const lifecycleEvents: ProviderRuntimeEvent[] = [];
+      const lifecycleFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.aborted" || event.type === "session.exited") {
+            lifecycleEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-process-exit-mid-turn");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "keep working",
+      });
+
+      yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(1));
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(lifecycleFiber).pipe(Effect.ignore);
+
+      assert.deepStrictEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.aborted", "session.exited"],
+      );
+      assert.deepStrictEqual(lifecycleEvents[0]?.payload, {
+        reason: "Pi RPC process exited with code 1.",
+      });
+      assert.deepStrictEqual(lifecycleEvents[1]?.payload, {
+        exitKind: "error",
+        recoverable: true,
+        reason: "Pi RPC process exited with code 1.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("kills the Pi process and aborts the active turn when stopping a running session", () =>
+    Effect.gen(function* () {
+      const { adapter, killCalls } = yield* makePiAdapterHarness();
+      const lifecycleEvents: ProviderRuntimeEvent[] = [];
+      const lifecycleFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.type === "turn.aborted" || event.type === "session.exited") {
+            lifecycleEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      const threadId = ThreadId.make("thread-pi-stop-running-session");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "keep working",
+      });
+
+      yield* adapter.stopSession(threadId);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+      yield* Fiber.interrupt(lifecycleFiber).pipe(Effect.ignore);
+
+      assert.strictEqual(yield* adapter.hasSession(threadId), false);
+      assert.strictEqual(killCalls.length, 1);
+      assert.deepStrictEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.aborted", "session.exited"],
+      );
+      assert.deepStrictEqual(lifecycleEvents[0]?.payload, {
+        reason: "Pi session stopped.",
+      });
+      assert.deepStrictEqual(lifecycleEvents[1]?.payload, {
+        exitKind: "graceful",
+      });
+    }).pipe(Effect.scoped),
+  );
+});

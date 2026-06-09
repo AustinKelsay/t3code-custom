@@ -115,6 +115,28 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Clone provider-native conversation state when the bound provider supports it.
+   */
+  readonly cloneConversation: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Manually compact provider-native conversation context when supported.
+   */
+  readonly compactConversation: (input: {
+    readonly threadId: ThreadId;
+    readonly customInstructions?: string;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Refresh provider-native token/cost stats when supported.
+   */
+  readonly refreshConversationStats: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
    * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).

@@ -76,11 +76,13 @@ describe("contextWindow", () => {
         totalProcessedTokens: 748_126,
         maxTokens: 258_400,
         lastUsedTokens: 81_659,
+        totalCostUsd: 0.0123,
       }),
     ]);
 
     expect(snapshot?.usedTokens).toBe(81_659);
     expect(snapshot?.totalProcessedTokens).toBe(748_126);
+    expect(snapshot?.totalCostUsd).toBe(0.0123);
   });
 
   it("synthesizes an estimated snapshot when no live activity exists and fallback is valid", () => {
