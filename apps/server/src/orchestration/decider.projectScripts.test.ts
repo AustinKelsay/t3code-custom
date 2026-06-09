@@ -14,6 +14,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import type * as Crypto from "effect/Crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import { decideOrchestrationCommand } from "./decider.ts";
@@ -23,6 +24,9 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+const runDecision = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto>): Promise<A> =>
+  Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
 
 function makeQueuedTurnRequest(messageId: MessageId, text: string) {
   return {
@@ -267,7 +271,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     const now = "2026-01-01T00:00:00.000Z";
     const readModel = await seedThreadReadModel(now);
 
-    const result = await Effect.runPromise(
+    const result = await runDecision(
       decideOrchestrationCommand({
         command: {
           type: "thread.turn.queue",
@@ -338,7 +342,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       }),
     );
 
-    const requested = await Effect.runPromise(
+    const requested = await runDecision(
       decideOrchestrationCommand({
         command: {
           type: "thread.turn.steer",
@@ -502,7 +506,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     );
 
     await expect(
-      Effect.runPromise(
+      runDecision(
         decideOrchestrationCommand({
           command: {
             type: "thread.queued-turn.send.start",
@@ -569,7 +573,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       }),
     );
 
-    const result = await Effect.runPromise(
+    const result = await runDecision(
       decideOrchestrationCommand({
         command: {
           type: "thread.queued-turn.send.start",
@@ -678,7 +682,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       }),
     );
 
-    const result = await Effect.runPromise(
+    const result = await runDecision(
       decideOrchestrationCommand({
         command: {
           type: "thread.queued-turn.retry",
@@ -730,7 +734,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       }),
     );
 
-    const result = await Effect.runPromise(
+    const result = await runDecision(
       decideOrchestrationCommand({
         command: {
           type: "thread.queued-turn.remove",
@@ -816,7 +820,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     );
 
     await expect(
-      Effect.runPromise(
+      runDecision(
         decideOrchestrationCommand({
           command: {
             type: "thread.queued-turn.remove",
@@ -830,12 +834,6 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       ),
     ).rejects.toThrow("is sending and cannot be removed");
   });
-
-  it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {
-    const now = "2026-01-01T00:00:00.000Z";
-    const initial = createEmptyReadModel(now);
-    const withProject = await Effect.runPromise(
-      projectEvent(initial, {
 
   it.effect("emits thread.runtime-mode-set from thread.runtime-mode.set", () =>
     Effect.gen(function* () {

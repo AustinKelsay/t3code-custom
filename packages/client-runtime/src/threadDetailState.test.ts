@@ -1,5 +1,5 @@
 import { AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   EventId,
@@ -52,6 +52,8 @@ const BASE_THREAD: OrchestrationThread = {
   archivedAt: null,
   deletedAt: null,
   messages: [],
+  queuedTurns: [],
+  steerEntries: [],
   proposedPlans: [],
   activities: [],
   checkpoints: [],

@@ -23,7 +23,6 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -85,12 +84,6 @@ function mapProviderSessionStatusToOrchestrationStatus(
 
 const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
   event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
-
-const effectServerCommandId = (tag: string) =>
-  Effect.map(Random.nextUUIDv4, (id) => CommandId.make(`server:${tag}:${id}`));
-const effectSteerEntryId = Effect.map(Random.nextUUIDv4, (id) =>
-  TurnSteerEntryId.make(`steer-entry:${id}`),
-);
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
@@ -197,6 +190,9 @@ const make = Effect.gen(function* () {
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
+  const steerEntryId = crypto.randomUUIDv4.pipe(
+    Effect.map((uuid) => TurnSteerEntryId.make(`steer-entry:${uuid}`)),
+  );
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -714,7 +710,7 @@ const make = Effect.gen(function* () {
       if (queueItemId === undefined) {
         return Effect.void;
       }
-      return effectServerCommandId(tag).pipe(
+      return serverCommandId(tag).pipe(
         Effect.flatMap((commandId) =>
           orchestrationEngine.dispatch({
             type: "thread.queued-turn.send.fail",
@@ -887,7 +883,7 @@ const make = Effect.gen(function* () {
     const dispatchSteerFallbackToQueue = Effect.fnUntraced(function* (reason: string) {
       yield* orchestrationEngine.dispatch({
         type: "thread.turn.steer.fallback-to-queue",
-        commandId: yield* effectServerCommandId("turn-steer-fallback-to-queue"),
+        commandId: yield* serverCommandId("turn-steer-fallback-to-queue"),
         threadId: event.payload.threadId,
         turnId: event.payload.turnId,
         message: {
@@ -904,7 +900,7 @@ const make = Effect.gen(function* () {
     const dispatchSteerFailure = Effect.fnUntraced(function* (reason: string) {
       yield* orchestrationEngine.dispatch({
         type: "thread.turn.steer.fail",
-        commandId: yield* effectServerCommandId("turn-steer-failed"),
+        commandId: yield* serverCommandId("turn-steer-failed"),
         threadId: event.payload.threadId,
         turnId: event.payload.turnId,
         messageId: event.payload.messageId,
@@ -956,9 +952,9 @@ const make = Effect.gen(function* () {
 
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.steer.accept",
-      commandId: yield* effectServerCommandId("turn-steer-accepted"),
+      commandId: yield* serverCommandId("turn-steer-accepted"),
       threadId: event.payload.threadId,
-      steerEntryId: yield* effectSteerEntryId,
+      steerEntryId: yield* steerEntryId,
       turnId: result.turnId,
       messageId: event.payload.messageId,
       text: event.payload.text,

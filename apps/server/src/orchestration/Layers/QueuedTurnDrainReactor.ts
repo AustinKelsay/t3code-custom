@@ -7,10 +7,10 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Random from "effect/Random";
 import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -28,8 +28,6 @@ type QueueDrainTriggerEvent = Extract<
 >;
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const serverCommandId = (tag: string) =>
-  Effect.map(Random.nextUUIDv4, (id) => CommandId.make(`server:${tag}:${id}`));
 
 type DrainMode = "normal" | "recover";
 
@@ -50,8 +48,11 @@ const canDrainWithMode = (thread: OrchestrationThread, mode: DrainMode) =>
   getQueuedTurnDrainMode(thread) === mode;
 
 const make = Effect.fn("makeQueuedTurnDrainReactor")(function* () {
+  const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const serverCommandId = (tag: string) =>
+    crypto.randomUUIDv4.pipe(Effect.map((id) => CommandId.make(`server:${tag}:${id}`)));
 
   const dispatchDrainIfReady = Effect.fn("dispatchDrainIfReady")(function* (
     threadId: ThreadId,

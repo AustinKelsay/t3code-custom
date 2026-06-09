@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   extractPathFromShellOutput,
@@ -11,6 +11,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
+  resolveKnownPosixCliDirs,
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
 } from "./shell.ts";
@@ -319,6 +320,40 @@ describe("resolveKnownWindowsCliDirs", () => {
       "C:\\Users\\testuser\\.bun\\bin",
       "C:\\Users\\testuser\\scoop\\shims",
     ]);
+  });
+});
+
+describe("resolveKnownPosixCliDirs", () => {
+  it("returns known macOS CLI install directories in priority order", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/Users/testuser" }, "darwin", "/fallback")).toEqual([
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      "/Users/testuser/.local/bin",
+      "/Users/testuser/.bun/bin",
+      "/Users/testuser/.cargo/bin",
+      "/Users/testuser/.volta/bin",
+      "/Users/testuser/Library/pnpm",
+    ]);
+  });
+
+  it("returns known Linux CLI install directories in priority order", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/home/testuser" }, "linux", "/fallback")).toEqual([
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/home/linuxbrew/.linuxbrew/sbin",
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      "/home/testuser/.local/bin",
+      "/home/testuser/.bun/bin",
+      "/home/testuser/.cargo/bin",
+      "/home/testuser/.volta/bin",
+      "/home/testuser/.local/share/pnpm",
+    ]);
+  });
+
+  it("returns no known POSIX CLI directories on unsupported platforms", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/Users/testuser" }, "win32", "/fallback")).toEqual([]);
   });
 });
 

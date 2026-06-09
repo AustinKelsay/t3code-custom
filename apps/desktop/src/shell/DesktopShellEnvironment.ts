@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { resolveKnownPosixCliDirs } from "@t3tools/shared/shell";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -196,7 +197,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
     .pipe(
       Effect.timeoutOption(input.timeout),
       Effect.map(Option.getOrElse(() => "")),
-      Effect.catch(() => Effect.succeed("")),
+      Effect.orElseSucceed(() => ""),
     );
 });
 
@@ -241,7 +242,6 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       const output = yield* runCommandOutput({
         command,
         args,
-        shell: true,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
       const environment = extractEnvironment(output, names);
@@ -299,8 +299,12 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
+    const knownCliPath = trimNonEmpty(
+      resolveKnownPosixCliDirs(config.env, config.platform).join(":"),
+    );
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      knownCliPath,
       readEnvPath(config.env),
     ]);
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   CheckpointRef,
@@ -36,6 +36,8 @@ const baseThread: OrchestrationThread = {
   archivedAt: null,
   deletedAt: null,
   messages: [],
+  queuedTurns: [],
+  steerEntries: [],
   proposedPlans: [],
   activities: [],
   checkpoints: [],

@@ -9,7 +9,6 @@ import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
-import * as Random from "effect/Random";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
@@ -25,8 +24,9 @@ import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-const newTurnQueueItemId = Effect.map(Random.nextUUIDv4, (id) =>
-  TurnQueueItemId.make(`queue-item:${id}`),
+const newTurnQueueItemId = Crypto.Crypto.pipe(
+  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.map((id) => TurnQueueItemId.make(`queue-item:${id}`)),
 );
 
 function withEventBase(
