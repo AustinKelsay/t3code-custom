@@ -1404,7 +1404,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       try {
-        await removeProject(member);
+        await removeProject(member, { force: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing project.";
         console.error("Failed to remove project", {
