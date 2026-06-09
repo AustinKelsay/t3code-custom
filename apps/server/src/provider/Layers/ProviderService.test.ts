@@ -219,6 +219,21 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const cloneThread = vi.fn(
+    (_threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> => Effect.void,
+  );
+
+  const compactThread = vi.fn(
+    (
+      _threadId: ThreadId,
+      _input?: { readonly customInstructions?: string },
+    ): Effect.Effect<void, ProviderAdapterError> => Effect.void,
+  );
+
+  const refreshThreadStats = vi.fn(
+    (_threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> => Effect.void,
+  );
+
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -243,6 +258,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    cloneThread,
+    compactThread,
+    refreshThreadStats,
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -279,6 +297,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    cloneThread,
+    compactThread,
+    refreshThreadStats,
     stopAll,
   };
 }
@@ -874,6 +895,49 @@ routing.layer("ProviderServiceLive routing", (it) => {
         streamKind: "assistant_text",
         delta: "hello from pi",
       });
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("routes Pi clone, compact, and stats refresh through provider bindings", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-pi-session-actions");
+
+      yield* provider.startSession(threadId, {
+        provider: PI_DRIVER,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/project-pi",
+        runtimeMode: "approval-required",
+      });
+
+      yield* provider.cloneConversation({ threadId });
+      yield* provider.compactConversation({
+        threadId,
+        customInstructions: "Keep deployment notes.",
+      });
+      yield* provider.refreshConversationStats({ threadId });
+
+      assert.deepEqual(routing.pi.cloneThread.mock.calls, [[threadId]]);
+      assert.deepEqual(routing.pi.compactThread.mock.calls, [
+        [threadId, { customInstructions: "Keep deployment notes." }],
+      ]);
+      assert.deepEqual(routing.pi.refreshThreadStats.mock.calls, [[threadId]]);
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        const payload = runtime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            lastRuntimeEvent?: string;
+          };
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.refreshConversationStats");
+        }
+      }
       yield* provider.stopSession({ threadId });
     }),
   );

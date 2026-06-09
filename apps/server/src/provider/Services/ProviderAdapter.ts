@@ -46,6 +46,10 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export interface ProviderCompactThreadInput {
+  readonly customInstructions?: string;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -124,6 +128,24 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Clone the provider-native conversation/session when supported.
+   */
+  readonly cloneThread?: (threadId: ThreadId) => Effect.Effect<void, TError>;
+
+  /**
+   * Manually compact the provider-native conversation context when supported.
+   */
+  readonly compactThread?: (
+    threadId: ThreadId,
+    input?: ProviderCompactThreadInput,
+  ) => Effect.Effect<void, TError>;
+
+  /**
+   * Refresh provider-native token/cost statistics when supported.
+   */
+  readonly refreshThreadStats?: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

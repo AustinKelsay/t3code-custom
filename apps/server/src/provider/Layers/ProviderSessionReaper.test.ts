@@ -175,6 +175,9 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      cloneConversation: () => unsupported(),
+      compactConversation: () => unsupported(),
+      refreshConversationStats: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

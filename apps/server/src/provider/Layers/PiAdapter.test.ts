@@ -623,6 +623,148 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("clones the active Pi session through native RPC", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-clone");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const cloneFiber = yield* adapter.cloneThread!(threadId).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const cloneCommand = findCommand(stdinLines, "clone");
+      assert.deepStrictEqual(scrubCommandId(cloneCommand), {
+        id: "<command-id>",
+        type: "clone",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: cloneCommand.id,
+          type: "response",
+          command: "clone",
+          success: true,
+          data: {
+            cancelled: false,
+          },
+        }),
+      );
+
+      yield* Fiber.join(cloneFiber);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("compacts Pi context and emits compacted state plus refreshed stats", () =>
+    Effect.gen(function* () {
+      const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
+      const threadId = ThreadId.make("thread-pi-compact");
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: PI_PROVIDER,
+        providerInstanceId: PI_INSTANCE,
+        runtimeMode: "approval-required",
+        cwd: "/tmp/pi-workspace",
+      });
+
+      const compactFiber = yield* adapter.compactThread!(threadId, {
+        customInstructions: "Keep deployment details.",
+      }).pipe(Effect.forkChild);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const compactCommand = findCommand(stdinLines, "compact");
+      assert.deepStrictEqual(scrubCommandId(compactCommand), {
+        id: "<command-id>",
+        type: "compact",
+        customInstructions: "Keep deployment details.",
+      });
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: compactCommand.id,
+          type: "response",
+          command: "compact",
+          success: true,
+          data: {
+            cancelled: false,
+          },
+        }),
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
+
+      const statsCommand = findCommand(stdinLines, "get_session_stats");
+      yield* Queue.offer(
+        stdout,
+        jsonl({
+          id: statsCommand.id,
+          type: "response",
+          command: "get_session_stats",
+          success: true,
+          data: {
+            sessionFile: "/tmp/pi-session.jsonl",
+            sessionId: "session-pi-compact",
+            userMessages: 3,
+            assistantMessages: 3,
+            toolCalls: 2,
+            toolResults: 2,
+            totalMessages: 10,
+            tokens: {
+              input: 1200,
+              output: 800,
+              cacheRead: 300,
+              cacheWrite: 100,
+              total: 2400,
+            },
+            cost: 0.0123,
+            contextUsage: {
+              used: 2400,
+              limit: 128000,
+              percentage: 1.875,
+            },
+          },
+        }),
+      );
+
+      yield* Fiber.join(compactFiber);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "thread.state.changed", "thread.token-usage.updated"],
+      );
+      assert.deepStrictEqual(events[2]?.payload, {
+        state: "compacted",
+        detail: {
+          source: "manual",
+        },
+      });
+      assert.deepStrictEqual(events[3]?.payload, {
+        usage: {
+          usedTokens: 2400,
+          totalProcessedTokens: 2400,
+          maxTokens: 128000,
+          inputTokens: 1200,
+          cachedInputTokens: 400,
+          outputTokens: 800,
+          toolUses: 2,
+          totalCostUsd: 0.0123,
+          compactsAutomatically: true,
+        },
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("steers an active Pi turn after Pi accepts the native steer command", () =>
     Effect.gen(function* () {
       const { adapter, stdinLines, stdout } = yield* makePiAdapterHarness();
@@ -756,7 +898,15 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
       }
       assert.strictEqual(error.method, "steerTurn");
       assert.strictEqual(error.detail, "Pi session does not have an active turn to steer.");
-      assert.strictEqual(stdinLines.length, 1);
+      assert.strictEqual(
+        stdinLines.filter(
+          (line) =>
+            typeof line === "object" &&
+            line !== null &&
+            (line as Record<string, unknown>).type !== "get_session_stats",
+        ).length,
+        1,
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -1300,11 +1450,18 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
 
       assert.strictEqual(commands.length, 1);
       assert.deepStrictEqual(
-        stdinLines.map((line) =>
-          typeof line === "object" && line !== null
-            ? { ...(line as Record<string, unknown>), id: "<turn-id>" }
-            : line,
-        ),
+        stdinLines
+          .filter(
+            (line) =>
+              typeof line === "object" &&
+              line !== null &&
+              (line as Record<string, unknown>).type === "prompt",
+          )
+          .map((line) =>
+            typeof line === "object" && line !== null
+              ? { ...(line as Record<string, unknown>), id: "<turn-id>" }
+              : line,
+          ),
         [
           { id: "<turn-id>", type: "prompt", message: "first prompt" },
           { id: "<turn-id>", type: "prompt", message: "second prompt" },

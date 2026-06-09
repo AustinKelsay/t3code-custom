@@ -227,6 +227,13 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const cloneConversation = vi.fn<ProviderServiceShape["cloneConversation"]>(() => Effect.void);
+    const compactConversation = vi.fn<ProviderServiceShape["compactConversation"]>(
+      () => Effect.void,
+    );
+    const refreshConversationStats = vi.fn<ProviderServiceShape["refreshConversationStats"]>(
+      () => Effect.void,
+    );
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -323,6 +330,9 @@ describe("ProviderCommandReactor", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      cloneConversation,
+      compactConversation,
+      refreshConversationStats,
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
@@ -416,6 +426,9 @@ describe("ProviderCommandReactor", () => {
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      cloneConversation,
+      compactConversation,
+      refreshConversationStats,
       stopSession,
       renameBranch,
       refreshStatus,
@@ -464,6 +477,41 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("reacts to thread session clone, compact, and stats refresh commands", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+
+    await harness.dispatch({
+      type: "thread.session.clone",
+      commandId: CommandId.make("cmd-session-clone"),
+      threadId,
+      createdAt: now,
+    });
+    await harness.dispatch({
+      type: "thread.session.compact",
+      commandId: CommandId.make("cmd-session-compact"),
+      threadId,
+      customInstructions: "Keep release notes.",
+      createdAt: now,
+    });
+    await harness.dispatch({
+      type: "thread.session.stats.refresh",
+      commandId: CommandId.make("cmd-session-stats-refresh"),
+      threadId,
+      createdAt: now,
+    });
+
+    await harness.drain();
+
+    expect(harness.cloneConversation).toHaveBeenCalledWith({ threadId });
+    expect(harness.compactConversation).toHaveBeenCalledWith({
+      threadId,
+      customInstructions: "Keep release notes.",
+    });
+    expect(harness.refreshConversationStats).toHaveBeenCalledWith({ threadId });
   });
 
   it("reacts to queued turn send start by sending the queued user message", async () => {

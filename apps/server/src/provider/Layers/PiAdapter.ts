@@ -11,6 +11,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
@@ -91,6 +92,11 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+function finiteNumberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
@@ -317,6 +323,75 @@ function piCancelledResultFromRpcData(
   }
   return Effect.succeed({
     cancelled: booleanField(data, "cancelled") ?? false,
+  });
+}
+
+function nonNegativeIntFromNumber(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function positiveIntFromNumber(value: number | undefined): number | undefined {
+  const normalized = nonNegativeIntFromNumber(value);
+  return normalized !== undefined && normalized > 0 ? normalized : undefined;
+}
+
+function piSessionStatsUsageFromRpcData(
+  data: unknown,
+): Effect.Effect<ThreadTokenUsageSnapshot | undefined, ProviderAdapterRequestError> {
+  if (!isObject(data)) {
+    return Effect.fail(
+      piCommandFailed(
+        "pi/get_session_stats",
+        "Pi get_session_stats response did not include data.",
+      ),
+    );
+  }
+
+  const tokens = isObject(data.tokens) ? data.tokens : undefined;
+  const contextUsage = isObject(data.contextUsage) ? data.contextUsage : undefined;
+  const inputTokens = nonNegativeIntFromNumber(finiteNumberField(tokens ?? {}, "input"));
+  const outputTokens = nonNegativeIntFromNumber(finiteNumberField(tokens ?? {}, "output"));
+  const cacheReadTokens = nonNegativeIntFromNumber(finiteNumberField(tokens ?? {}, "cacheRead"));
+  const cacheWriteTokens = nonNegativeIntFromNumber(finiteNumberField(tokens ?? {}, "cacheWrite"));
+  const cachedInputTokens =
+    cacheReadTokens !== undefined || cacheWriteTokens !== undefined
+      ? (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
+      : undefined;
+  const totalTokens = nonNegativeIntFromNumber(finiteNumberField(tokens ?? {}, "total"));
+  const contextUsedTokens = nonNegativeIntFromNumber(
+    finiteNumberField(contextUsage ?? {}, "used") ??
+      finiteNumberField(contextUsage ?? {}, "tokens") ??
+      finiteNumberField(contextUsage ?? {}, "usedTokens"),
+  );
+  const usedTokens =
+    contextUsedTokens ??
+    totalTokens ??
+    (inputTokens ?? 0) + (outputTokens ?? 0) + (cachedInputTokens ?? 0);
+  const maxTokens = positiveIntFromNumber(
+    finiteNumberField(contextUsage ?? {}, "limit") ??
+      finiteNumberField(contextUsage ?? {}, "maxTokens") ??
+      finiteNumberField(contextUsage ?? {}, "contextWindow"),
+  );
+  const toolUses = nonNegativeIntFromNumber(finiteNumberField(data, "toolCalls"));
+  const totalCostUsd = finiteNumberField(data, "cost");
+
+  if (!Number.isFinite(usedTokens) || usedTokens < 0) {
+    return Effect.succeed(undefined);
+  }
+
+  return Effect.succeed({
+    usedTokens,
+    ...(totalTokens !== undefined ? { totalProcessedTokens: totalTokens } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {}),
+    ...(totalCostUsd !== undefined && totalCostUsd >= 0 ? { totalCostUsd } : {}),
+    compactsAutomatically: true,
   });
 }
 
@@ -775,6 +850,10 @@ export function makePiAdapter(
               stopReason: stringField(event, "stop_reason") ?? null,
             },
           });
+          yield* emitPiSessionStats(context).pipe(
+            Effect.ignoreCause({ log: true }),
+            Effect.forkIn(runtimeScope),
+          );
         }
       });
 
@@ -1142,6 +1221,26 @@ export function makePiAdapter(
         context.thinkingLevel = thinkingLevel;
       });
 
+    const emitPiSessionStats = (
+      context: PiSessionContext,
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+      Effect.gen(function* () {
+        const statsData = yield* writeCommandAndAwaitResponse(context, "get_session_stats", {
+          type: "get_session_stats",
+        });
+        const usage = yield* piSessionStatsUsageFromRpcData(statsData);
+        if (!usage) {
+          return;
+        }
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: context.session.threadId })),
+          type: "thread.token-usage.updated",
+          payload: {
+            usage,
+          },
+        });
+      });
+
     const sendTurn: PiAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* getSessionContext(input.threadId);
@@ -1430,6 +1529,68 @@ export function makePiAdapter(
       },
     );
 
+    const cloneThread: NonNullable<PiAdapterShape["cloneThread"]> = Effect.fn("cloneThread")(
+      function* (threadId) {
+        const context = yield* getSessionContext(threadId);
+        if (context.activeTurnId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "cloneThread",
+            detail: "Pi session has an active turn; interrupt it before cloning.",
+          });
+        }
+
+        const cloneData = yield* writeCommandAndAwaitResponse(context, "clone", {
+          type: "clone",
+        });
+        const cloneResult = yield* piCancelledResultFromRpcData("clone", cloneData);
+        if (cloneResult.cancelled) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "cloneThread",
+            detail: "Pi session clone was cancelled.",
+          });
+        }
+      },
+    );
+
+    const compactThread: NonNullable<PiAdapterShape["compactThread"]> = Effect.fn("compactThread")(
+      function* (threadId, input) {
+        const context = yield* getSessionContext(threadId);
+        if (context.activeTurnId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "compactThread",
+            detail: "Pi session has an active turn; interrupt it before compacting.",
+          });
+        }
+
+        const customInstructions = input?.customInstructions?.trim();
+        yield* writeCommandAndAwaitResponse(context, "compact", {
+          type: "compact",
+          ...(customInstructions ? { customInstructions } : {}),
+        });
+        yield* emit({
+          ...(yield* buildEventBase({ threadId })),
+          type: "thread.state.changed",
+          payload: {
+            state: "compacted",
+            detail: {
+              source: "manual",
+            },
+          },
+        });
+        yield* emitPiSessionStats(context);
+      },
+    );
+
+    const refreshThreadStats: NonNullable<PiAdapterShape["refreshThreadStats"]> = Effect.fn(
+      "refreshThreadStats",
+    )(function* (threadId) {
+      const context = yield* getSessionContext(threadId);
+      yield* emitPiSessionStats(context);
+    });
+
     return {
       provider: PROVIDER,
       capabilities: {
@@ -1448,6 +1609,9 @@ export function makePiAdapter(
       hasSession: (threadId) => Effect.succeed(sessions.has(threadId)),
       readThread,
       rollbackThread,
+      cloneThread,
+      compactThread,
+      refreshThreadStats,
       stopAll: () =>
         Effect.forEach(Array.from(sessions.keys()), (threadId) => stopSession(threadId), {
           discard: true,

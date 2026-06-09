@@ -12,9 +12,20 @@ function formatPercentage(value: number | null): string | null {
   return `${Math.round(value)}%`;
 }
 
+function formatUsd(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  if (value > 0 && value < 0.01) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
+
 export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
   const { usage } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
+  const totalCost = formatUsd(usage.totalCostUsd ?? null);
   const isEstimatedNoCapacity =
     usage.source === "estimated" && usage.maxTokens === null && usage.usedTokens > 0;
   const normalizedPercentage = isEstimatedNoCapacity
@@ -116,6 +127,9 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
               Total processed: {formatContextWindowTokens(usage.totalProcessedTokens ?? null)}{" "}
               tokens
             </div>
+          ) : null}
+          {totalCost ? (
+            <div className="text-xs text-muted-foreground">Total cost: {totalCost}</div>
           ) : null}
           {usage.compactsAutomatically ? (
             <div className="text-xs text-muted-foreground">

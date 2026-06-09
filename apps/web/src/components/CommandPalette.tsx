@@ -965,6 +965,52 @@ function OpenCommandPaletteDialog() {
     openAddProjectFlow();
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 
+  const runActiveThreadSessionCommand = useCallback(
+    async (
+      type: "thread.session.clone" | "thread.session.compact" | "thread.session.stats.refresh",
+      successTitle: string,
+    ) => {
+      if (!activeThread) {
+        return;
+      }
+      const api = readEnvironmentApi(activeThread.environmentId);
+      if (!api) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to run session action",
+            description: "No environment is available for this thread.",
+          }),
+        );
+        return;
+      }
+
+      try {
+        await api.orchestration.dispatchCommand({
+          type,
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          createdAt: new Date().toISOString(),
+        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: successTitle,
+          }),
+        );
+      } catch (err) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Session action failed",
+            description: err instanceof Error ? err.message : "Unable to run session action.",
+          }),
+        );
+      }
+    },
+    [activeThread],
+  );
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -992,6 +1038,45 @@ function OpenCommandPaletteDialog() {
             defaultThreadEnvMode: settings.defaultThreadEnvMode,
             handleNewThread,
           });
+        },
+      });
+    }
+
+    if (activeThread?.session && activeThread.session.status !== "closed") {
+      actionItems.push({
+        kind: "action",
+        value: "action:thread-session-compact",
+        searchTerms: ["compact", "manual compact", "context", "tokens", "session"],
+        title: "Compact current session",
+        icon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await runActiveThreadSessionCommand(
+            "thread.session.compact",
+            "Session compaction requested",
+          );
+        },
+      });
+      actionItems.push({
+        kind: "action",
+        value: "action:thread-session-refresh-stats",
+        searchTerms: ["stats", "tokens", "cost", "usage", "refresh", "session"],
+        title: "Refresh session stats",
+        icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await runActiveThreadSessionCommand(
+            "thread.session.stats.refresh",
+            "Session stats refresh requested",
+          );
+        },
+      });
+      actionItems.push({
+        kind: "action",
+        value: "action:thread-session-clone",
+        searchTerms: ["clone", "duplicate", "fork", "session", "branch"],
+        title: "Clone current session",
+        icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await runActiveThreadSessionCommand("thread.session.clone", "Session clone requested");
         },
       });
     }
