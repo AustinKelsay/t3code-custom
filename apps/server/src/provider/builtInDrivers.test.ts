@@ -1,5 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { expect, it } from "vitest";
+import { expect, it } from "@effect/vitest";
 
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 
