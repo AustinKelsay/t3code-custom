@@ -1717,20 +1717,19 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
   it.effect("maps documented Pi RPC text and tool events into canonical runtime events", () =>
     Effect.gen(function* () {
       const { adapter, stdout } = yield* makePiAdapterHarness();
-      const runtimeEvents: ProviderRuntimeEvent[] = [];
-      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => {
-          if (
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
             event.type === "content.delta" ||
             event.type === "item.started" ||
             event.type === "item.updated" ||
             event.type === "item.completed" ||
-            event.type === "turn.completed"
-          ) {
-            runtimeEvents.push(event);
-          }
-        }),
-      ).pipe(Effect.forkChild);
+            event.type === "turn.completed",
+        ),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
       const threadId = ThreadId.make("thread-pi-documented-rpc-events");
 
       yield* adapter.startSession({
@@ -1790,8 +1789,7 @@ it.layer(NodeServices.layer)("makePiAdapter", (it) => {
       );
       yield* Queue.offer(stdout, jsonl({ type: "turn_end", message: {}, toolResults: [] }));
 
-      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 25)));
-      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
 
       assert.deepStrictEqual(
         runtimeEvents.map((event) => event.type),
