@@ -106,7 +106,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, Clock3Icon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -156,6 +156,7 @@ import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./Branch
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { ComposerQueuedTurnStack } from "./chat/ComposerQueuedTurnStack";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildComposerTurnDispatch,
@@ -1575,78 +1576,6 @@ export default function ChatView(props: ChatViewProps) {
         },
       });
     }
-    const queuedTurns = activeThread?.queuedTurns ?? [];
-    const failedQueuedTurns = queuedTurns.filter((queuedTurn) => queuedTurn.status === "failed");
-    const pendingQueuedTurnCount = queuedTurns.filter(
-      (queuedTurn) => queuedTurn.status === "pending",
-    ).length;
-    const sendingQueuedTurnCount = queuedTurns.filter(
-      (queuedTurn) => queuedTurn.status === "sending",
-    ).length;
-    for (const failedQueuedTurn of failedQueuedTurns) {
-      const queuedMessageText = failedQueuedTurn.request.message.text.trim();
-      const queuedMessagePreview =
-        queuedMessageText && queuedMessageText.length > 0 ? truncate(queuedMessageText, 140) : null;
-      items.push({
-        id: `queued-turn-failed:${failedQueuedTurn.queueItemId}`,
-        variant: "error",
-        icon: <TriangleAlertIcon />,
-        title: "Queued turn failed",
-        description: (
-          <>
-            {queuedMessagePreview ? (
-              <>
-                <span className="font-medium">&ldquo;{queuedMessagePreview}&rdquo;</span>{" "}
-              </>
-            ) : null}
-            {failedQueuedTurn.failureReason ??
-              "The queued turn could not be sent. Retry it after the current session settles."}
-          </>
-        ),
-        actions: (
-          <>
-            <Button
-              size="xs"
-              onClick={() => void handleRetryQueuedTurn(failedQueuedTurn.queueItemId)}
-            >
-              Retry
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => void handleRemoveQueuedTurn(failedQueuedTurn.queueItemId)}
-            >
-              Remove
-            </Button>
-          </>
-        ),
-      });
-    }
-    if (pendingQueuedTurnCount > 0 || sendingQueuedTurnCount > 0) {
-      const queuedTurnCount = pendingQueuedTurnCount + sendingQueuedTurnCount;
-      const pendingQueueHead = queuedTurns.find((queuedTurn) => queuedTurn.status === "pending");
-      items.push({
-        id: `queued-turns:${activeThread?.id ?? "none"}`,
-        variant: "info",
-        icon: <Clock3Icon />,
-        title: queuedTurnCount === 1 ? "1 turn is queued" : `${queuedTurnCount} turns are queued`,
-        description:
-          sendingQueuedTurnCount > 0 && pendingQueuedTurnCount > 0
-            ? `${sendingQueuedTurnCount} sending, ${pendingQueuedTurnCount} waiting for the thread to become ready.`
-            : sendingQueuedTurnCount > 0
-              ? "The next queued turn is being sent now."
-              : "Queued turns will send automatically when the thread becomes ready.",
-        actions: pendingQueueHead ? (
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => void handleRemoveQueuedTurn(pendingQueueHead.queueItemId)}
-          >
-            Remove next
-          </Button>
-        ) : undefined,
-      });
-    }
     return items;
   })();
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
@@ -1958,15 +1887,8 @@ export default function ChatView(props: ChatViewProps) {
         activeThread?.proposedPlans ?? [],
         workLogEntries,
         activeThread?.steerEntries ?? [],
-        activeThread?.queuedTurns ?? [],
       ),
-    [
-      activeThread?.proposedPlans,
-      activeThread?.queuedTurns,
-      activeThread?.steerEntries,
-      timelineMessages,
-      workLogEntries,
-    ],
+    [activeThread?.proposedPlans, activeThread?.steerEntries, timelineMessages, workLogEntries],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -4109,6 +4031,12 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
               <div className="relative z-10">
+                <ComposerQueuedTurnStack
+                  disabled={isConnecting || activeEnvironmentUnavailable}
+                  queuedTurns={activeThread?.queuedTurns ?? []}
+                  onRemoveQueuedTurn={(queueItemId) => void handleRemoveQueuedTurn(queueItemId)}
+                  onRetryQueuedTurn={(queueItemId) => void handleRetryQueuedTurn(queueItemId)}
+                />
                 <ChatComposer
                   composerRef={composerRef}
                   composerDraftTarget={composerDraftTarget}

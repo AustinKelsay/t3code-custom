@@ -31,7 +31,6 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
-  Clock3Icon,
   EyeIcon,
   GlobeIcon,
   HammerIcon,
@@ -326,7 +325,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "steer-entry" ? <SteerEntryTimelineRow row={row} /> : null}
-      {row.kind === "queued-turn" ? <QueuedTurnTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -418,36 +416,6 @@ function SteerEntryTimelineRow({
           <p className="text-sm text-muted-foreground">{row.text}</p>
         </div>
         <p className="mt-1 text-right text-[11px] text-muted-foreground/40">
-          {formatTimestamp(row.createdAt, ctx.timestampFormat)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function QueuedTurnTimelineRow({
-  row,
-}: {
-  row: Extract<MessagesTimelineRow, { kind: "queued-turn" }>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const statusLabel =
-    row.status === "failed"
-      ? "Queued turn failed"
-      : row.status === "sending"
-        ? "Sending queued turn"
-        : "Queued turn";
-  const Icon = row.status === "failed" ? CircleAlertIcon : Clock3Icon;
-
-  return (
-    <div className="flex justify-end">
-      <div className="relative max-w-[80%] rounded-xl rounded-br-sm border border-border/60 bg-secondary/60 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Icon className="shrink-0" size={14} />
-          <p className="text-xs font-medium uppercase tracking-wide">{statusLabel}</p>
-        </div>
-        {row.text.trim().length > 0 ? <p className="mt-1 text-sm">{row.text}</p> : null}
-        <p className="mt-1 text-right text-[11px] text-muted-foreground/50">
           {formatTimestamp(row.createdAt, ctx.timestampFormat)}
         </p>
       </div>

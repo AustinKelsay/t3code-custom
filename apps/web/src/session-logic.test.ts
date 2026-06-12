@@ -2,7 +2,6 @@ import {
   EventId,
   MessageId,
   ThreadId,
-  TurnQueueItemId,
   TurnId,
   TurnSteerEntryId,
   type OrchestrationThreadActivity,
@@ -1445,49 +1444,6 @@ describe("deriveTimelineEntries", () => {
       steerEntryId: "steer-1",
       turnId: "turn-1",
       text: "Also add error handling",
-    });
-  });
-
-  it("includes active queued turns as lightweight timeline entries", () => {
-    const entries = deriveTimelineEntries(
-      [
-        {
-          id: MessageId.make("user-1"),
-          role: "user",
-          text: "Write a function",
-          turnId: TurnId.make("turn-1"),
-          createdAt: "2026-02-23T00:00:00.000Z",
-          streaming: false,
-        },
-      ],
-      [],
-      [],
-      [],
-      [
-        {
-          queueItemId: TurnQueueItemId.make("queue-1"),
-          status: "pending",
-          request: {
-            message: {
-              messageId: MessageId.make("queued-msg-1"),
-              role: "user",
-              text: "Then add tests",
-              attachments: [],
-            },
-          },
-          failureReason: null,
-          createdAt: "2026-02-23T00:00:10.000Z",
-          updatedAt: "2026-02-23T00:00:10.000Z",
-        },
-      ],
-    );
-
-    expect(entries.map((entry) => entry.kind)).toEqual(["message", "queued-turn"]);
-    expect(entries[1]).toMatchObject({
-      kind: "queued-turn",
-      queueItemId: "queue-1",
-      status: "pending",
-      text: "Then add tests",
     });
   });
 });
