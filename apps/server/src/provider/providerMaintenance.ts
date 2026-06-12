@@ -45,6 +45,7 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
+  readonly npmGlobalInstallFlags?: ReadonlyArray<string>;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
     readonly executable: string;
@@ -115,7 +116,12 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "npm",
-    updateArgs: ["install", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: [
+      "install",
+      "-g",
+      ...(definition.npmGlobalInstallFlags ?? []),
+      `${definition.npmPackageName}@latest`,
+    ],
     updateLockKey: "npm-global",
   });
 }

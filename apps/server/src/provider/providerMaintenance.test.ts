@@ -400,6 +400,42 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it.effect("allows npm postinstall scripts when updating npm-managed OpenCode installs", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-opencode-npm-capabilities");
+      const binDir = path.join(tempDir, "bin");
+      const packageBinDir = path.join(tempDir, "lib", "node_modules", "opencode-ai", "bin");
+      mkdirSync(binDir, { recursive: true });
+      mkdirSync(packageBinDir, { recursive: true });
+      const packageBinPath = path.join(packageBinDir, "opencode.exe");
+      const symlinkPath = path.join(binDir, "opencode");
+      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+      chmodSync(packageBinPath, 0o755);
+      symlinkSync(packageBinPath, symlinkPath);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        OpenCodeMaintenanceCapabilities,
+        {
+          binaryPath: symlinkPath,
+          platform: "darwin",
+          env: {
+            PATH: "",
+          },
+        },
+      );
+
+      expect(capabilities).toMatchObject({
+        packageName: "opencode-ai",
+        update: {
+          command: "npm install -g --ignore-scripts=false opencode-ai@latest",
+          executable: "npm",
+          args: ["install", "-g", "--ignore-scripts=false", "opencode-ai@latest"],
+          lockKey: "npm-global",
+        },
+      });
+    }),
+  );
+
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-capabilities");

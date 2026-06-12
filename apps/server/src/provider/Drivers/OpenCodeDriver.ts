@@ -63,6 +63,7 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
 export const OpenCodeMaintenanceCapabilities = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "opencode-ai",
+  npmGlobalInstallFlags: ["--ignore-scripts=false"],
   homebrewFormula: "opencode",
   nativeUpdate: {
     executable: "opencode",
