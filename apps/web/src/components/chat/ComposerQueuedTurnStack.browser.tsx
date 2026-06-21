@@ -37,7 +37,7 @@ describe("ComposerQueuedTurnStack", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders a compact queue stack without transcript message roles", async () => {
+  it("renders a compact outbox without transcript message roles", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -72,17 +72,24 @@ describe("ComposerQueuedTurnStack", () => {
     });
 
     try {
-      await expect.element(page.getByLabelText("3 queued messages")).toBeVisible();
+      await expect
+        .element(page.getByLabelText("Outbox, 3 queued messages waiting to send"))
+        .toBeVisible();
+      await expect.element(page.getByLabelText("3 queued messages", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Outbox", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("3 waiting to send")).toBeVisible();
       await expect.element(page.getByText("First queued follow-up")).toBeVisible();
       await expect.element(page.getByText("Second queued follow-up")).toBeVisible();
       await expect.element(page.getByText("Retry this queued follow-up")).toBeVisible();
       await expect.element(page.getByLabelText("Retry queued message 3")).toBeVisible();
       await expect.element(page.getByLabelText("Remove queued message 1")).toBeVisible();
 
+      const outbox = document.querySelector<HTMLElement>("[data-queued-turn-outbox]");
+      expect(outbox).not.toBeNull();
       const stack = document.querySelector<HTMLElement>("[data-queued-turn-stack]");
-      expect(stack?.textContent).toContain("Queued");
-      expect(stack?.textContent).toContain("Sending");
-      expect(stack?.textContent).toContain("Failed");
+      expect(stack?.textContent).toContain("Queued, not sent yet");
+      expect(stack?.textContent).toContain("Sending from outbox");
+      expect(stack?.textContent).toContain("Failed before sending");
       const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-queued-turn-item]"));
       expect(rows).toHaveLength(3);
       expect(rows.map((row) => row.dataset.queuedTurnPosition)).toEqual(["1", "2", "3"]);

@@ -60,6 +60,7 @@ describe("ComposerQueuedTurnStack", () => {
     ]);
 
     expect(markup).toContain('data-queued-turn-stack="true"');
+    expect(markup).toContain('data-queued-turn-outbox="true"');
     expect(markup).toContain('data-queued-turn-position="1"');
     expect(markup).toContain('data-queued-turn-position="2"');
     expect(markup.indexOf("First in queue order")).toBeLessThan(
@@ -67,23 +68,27 @@ describe("ComposerQueuedTurnStack", () => {
     );
   });
 
-  it("renders compact status rows with queue actions", () => {
+  it("renders queued turns as an unsent outbox with queue actions", () => {
     const markup = renderStack([
       makeQueuedTurn({ id: "queue-pending", status: "pending", text: "Queued follow-up" }),
       makeQueuedTurn({ id: "queue-sending", status: "sending", text: "Currently sending" }),
       makeQueuedTurn({ id: "queue-failed", status: "failed", text: "Needs retry" }),
     ]);
 
-    expect(markup).toContain('aria-label="3 queued messages"');
-    expect(markup).toContain('aria-label="Queued message 1, waiting in queue"');
+    expect(markup).toContain('aria-label="Outbox, 3 queued messages waiting to send"');
+    expect(markup).toContain("Outbox");
+    expect(markup).toContain("3 waiting to send");
+    expect(markup).toContain('aria-label="Queued message 1, queued in outbox, not sent yet"');
     expect(markup).toContain('data-queued-turn-status="pending"');
+    expect(markup).toContain("Queued, not sent yet");
     expect(markup).toContain("Queued follow-up");
-    expect(markup).toContain('aria-label="Queued message 2, sending from queue"');
+    expect(markup).toContain('aria-label="Queued message 2, sending from outbox"');
     expect(markup).toContain('data-queued-turn-status="sending"');
     expect(markup).toContain("Currently sending");
-    expect(markup).toContain('aria-label="Queued message 3, failed in queue"');
+    expect(markup).toContain('aria-label="Queued message 3, failed before sending"');
     expect(markup).toContain('data-queued-turn-status="failed"');
     expect(markup).toContain("Needs retry");
+    expect(markup).not.toContain('data-message-role="user"');
     expect(markup).toContain('aria-label="Remove queued message 1"');
     expect(markup).toContain('aria-label="Remove queued message 2"');
     expect(markup).toContain('aria-label="Retry queued message 3"');
