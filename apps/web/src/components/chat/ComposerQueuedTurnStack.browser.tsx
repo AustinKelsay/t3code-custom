@@ -3,7 +3,7 @@ import "../../index.css";
 import { MessageId, TurnQueueItemId, type OrchestrationQueuedTurn } from "@t3tools/contracts";
 import { page } from "vite-plus/test/browser";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { render } from "vitest-browser-react";
+import { createRoot } from "react-dom/client";
 
 import { ComposerQueuedTurnStack } from "./ComposerQueuedTurnStack";
 
@@ -38,7 +38,10 @@ describe("ComposerQueuedTurnStack", () => {
   });
 
   it("renders a compact queue stack without transcript message roles", async () => {
-    const screen = await render(
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    root.render(
       <ComposerQueuedTurnStack
         queuedTurns={[
           makeQueuedTurn({
@@ -64,6 +67,9 @@ describe("ComposerQueuedTurnStack", () => {
         onRetryQueuedTurn={vi.fn()}
       />,
     );
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
 
     try {
       await expect.element(page.getByLabelText("3 queued messages")).toBeVisible();
@@ -90,7 +96,8 @@ describe("ComposerQueuedTurnStack", () => {
         expect(row.getBoundingClientRect().height).toBeLessThanOrEqual(44);
       }
     } finally {
-      await screen.unmount();
+      root.unmount();
+      container.remove();
     }
   });
 });

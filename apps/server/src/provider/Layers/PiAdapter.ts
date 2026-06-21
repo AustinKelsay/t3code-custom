@@ -14,6 +14,7 @@ import {
   type ProviderUserInputAnswers,
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -415,6 +416,7 @@ export function makePiAdapter(
   return Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const platform = yield* HostProcessPlatform;
     const runtimeScope = yield* Effect.scope;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, PiSessionContext>();
@@ -1018,7 +1020,7 @@ export function makePiAdapter(
         const command = ChildProcess.make(piSettings.binaryPath, args, {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(options.environment ? { env: options.environment, extendEnv: true } : {}),
-          shell: process.platform === "win32",
+          shell: platform === "win32",
         });
         const child = yield* spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, runtimeScope),

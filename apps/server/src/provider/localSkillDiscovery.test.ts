@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -28,14 +28,14 @@ A canvas is a standalone artifact shown beside the chat.
 
       const skills = discoverLocalProviderSkills(root);
 
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.name, "canvas");
-      assert.equal(skills[0]?.displayName, "Canvas");
-      assert.equal(
+      NodeAssert.equal(skills.length, 1);
+      NodeAssert.equal(skills[0]?.name, "canvas");
+      NodeAssert.equal(skills[0]?.displayName, "Canvas");
+      NodeAssert.equal(
         skills[0]?.description,
         "A canvas is a standalone artifact shown beside the chat.",
       );
-      assert.equal(skills[0]?.shortDescription, skills[0]?.description);
+      NodeAssert.equal(skills[0]?.shortDescription, skills[0]?.description);
     }),
   );
 });

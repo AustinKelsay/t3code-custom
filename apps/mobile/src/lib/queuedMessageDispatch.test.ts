@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
   EnvironmentId,
@@ -12,14 +12,13 @@ import {
 } from "@t3tools/contracts";
 
 import { buildQueuedMessageDispatchCommand } from "./queuedMessageDispatch";
-import type { QueuedThreadMessage } from "./threadActivity";
+import type { QueuedThreadMessage } from "../state/thread-outbox-model";
 
 const now = "2026-04-01T00:00:00.000Z";
 
 function makeThread(
-  input: Partial<EnvironmentScopedThreadShell> &
-    Pick<EnvironmentScopedThreadShell, "environmentId" | "id">,
-): EnvironmentScopedThreadShell {
+  input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "environmentId" | "id">,
+): EnvironmentThreadShell {
   return {
     projectId: ProjectId.make("project-1"),
     title: "Mobile thread",

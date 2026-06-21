@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - Pi CLI JSONL commands are provider boundary payloads.
 import { ProviderDriverKind, type PiSettings, type ServerProviderModel } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,7 +16,6 @@ import {
   detailFromResult,
   isCommandMissingCause,
   parseGenericCliVersion,
-  ProviderCommandExecutionError,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
@@ -44,14 +44,26 @@ const PI_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 
+class ProviderCommandExecutionError extends Error {
+  readonly _tag = "ProviderCommandExecutionError";
+  override readonly cause?: unknown;
+
+  constructor(input: { readonly message: string; readonly cause?: unknown }) {
+    super(input.message);
+    this.name = "ProviderCommandExecutionError";
+    this.cause = input.cause;
+  }
+}
+
 const runPiCommand = Effect.fn("runPiCommand")(function* (
   piSettings: PiSettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
+  const platform = yield* HostProcessPlatform;
   const command = ChildProcess.make(piSettings.binaryPath, [...args], {
     env: environment,
-    shell: process.platform === "win32",
+    shell: platform === "win32",
   });
   return yield* spawnAndCollect(piSettings.binaryPath, command);
 });
@@ -109,12 +121,13 @@ const runPiRpcCommand = (
 ): Effect.Effect<unknown, ProviderCommandExecutionError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const platform = yield* HostProcessPlatform;
     const command = ChildProcess.make(
       piSettings.binaryPath,
       ["--mode", "rpc", "--no-session", "--no-extensions", "--no-skills"],
       {
         env: environment,
-        shell: process.platform === "win32",
+        shell: platform === "win32",
       },
     );
     const child = yield* spawner.spawn(command).pipe(Effect.mapError(toPiRpcExecutionError));
@@ -140,21 +153,27 @@ const runPiRpcCommand = (
       ).pipe(Effect.map(([response]) => response));
 
       if (Option.isNone(responseOption)) {
-        return yield* new ProviderCommandExecutionError({
-          message: `Pi RPC did not return a response for ${commandName}.`,
-        });
+        return yield* Effect.fail(
+          new ProviderCommandExecutionError({
+            message: `Pi RPC did not return a response for ${commandName}.`,
+          }),
+        );
       }
       const response = parsePiRpcResponseLine(commandName, responseOption.value);
       if (!response) {
-        return yield* new ProviderCommandExecutionError({
-          message: `Pi RPC returned an invalid response for ${commandName}.`,
-        });
+        return yield* Effect.fail(
+          new ProviderCommandExecutionError({
+            message: `Pi RPC returned an invalid response for ${commandName}.`,
+          }),
+        );
       }
       if (response.success !== true) {
         const error = stringField(response, "error") ?? "Unknown Pi RPC error.";
-        return yield* new ProviderCommandExecutionError({
-          message: `Pi RPC ${commandName} failed: ${error}`,
-        });
+        return yield* Effect.fail(
+          new ProviderCommandExecutionError({
+            message: `Pi RPC ${commandName} failed: ${error}`,
+          }),
+        );
       }
       return response.data;
     }).pipe(

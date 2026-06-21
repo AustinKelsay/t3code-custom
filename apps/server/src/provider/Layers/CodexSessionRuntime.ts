@@ -17,6 +17,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -26,10 +27,9 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SchemaIssue from "effect/SchemaIssue";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -64,6 +64,10 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "does not exist",
 ];
 
+export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
+  return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -86,7 +90,6 @@ const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffe
 
 export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
-const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
@@ -105,6 +108,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly appServerArgs?: ReadonlyArray<string>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -394,7 +398,13 @@ export function buildTurnStartParams(input: {
     ...(input.effort ? { effort: input.effort } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
-    Effect.mapError((error) => toProtocolParseError("Invalid turn/start request payload", error)),
+    Effect.mapError((cause) =>
+      CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+        "decode-request-payload",
+        cause,
+        { method: "turn/start" },
+      ),
+    ),
   );
 }
 
@@ -472,7 +482,7 @@ export const openCodexThread = (input: {
           requestedRuntimeMode: input.runtimeMode,
           resumeThreadId,
           recoverable: true,
-          cause: error.message,
+          cause: error,
         }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
       ),
     );
@@ -662,16 +672,6 @@ function toCodexUserInputAnswers(
   ).pipe(Effect.map((entries) => Object.fromEntries(entries)));
 }
 
-function toProtocolParseError(
-  detail: string,
-  cause: Schema.SchemaError,
-): CodexErrors.CodexAppServerProtocolParseError {
-  return new CodexErrors.CodexAppServerProtocolParseError({
-    detail: `${detail}: ${formatSchemaIssue(cause.issue)}`,
-    cause,
-  });
-}
-
 function currentProviderThreadId(session: ProviderSession): string | undefined {
   return readResumeCursorThreadId(session.resumeCursor);
 }
@@ -725,16 +725,23 @@ export const makeCodexSessionRuntime = (
     // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
     const env = {
-      ...(options.environment ?? process.env),
+      ...options.environment,
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
+    const extendEnv = options.environment === undefined;
+    const spawnCommand = yield* resolveSpawnCommand(
+      options.binaryPath,
+      ["app-server", ...(options.appServerArgs ?? [])],
+      { env, extendEnv },
+    );
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(options.binaryPath, ["app-server"], {
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: options.cwd,
           env,
+          extendEnv,
           forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
-          shell: process.platform === "win32",
+          shell: spawnCommand.shell,
         }),
       )
       .pipe(
@@ -757,15 +764,16 @@ export const makeCodexSessionRuntime = (
     );
     const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-    const randomUUIDv4 = crypto.randomUUIDv4.pipe(
-      Effect.mapError(
-        (cause) =>
-          new CodexErrors.CodexAppServerTransportError({
-            detail: "Failed to generate Codex runtime identifier.",
-            cause,
-          }),
-      ),
-    );
+    const randomUUIDv4 = (purpose: CodexErrors.CodexAppServerIdentifierPurpose) =>
+      crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new CodexErrors.CodexAppServerIdentifierGenerationError({
+              purpose,
+              cause,
+            }),
+        ),
+      );
 
     const sessionCreatedAt = yield* nowIso;
     const initialSession = {
@@ -785,7 +793,7 @@ export const makeCodexSessionRuntime = (
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
-        const id = yield* randomUUIDv4;
+        const id = yield* randomUUIDv4("provider-event");
         return yield* offerEvent({
           id: EventId.make(id),
           provider: PROVIDER,
@@ -953,7 +961,7 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
       Effect.gen(function* () {
-        const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+        const requestId = ApprovalRequestId.make(yield* randomUUIDv4("command-approval-request"));
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
@@ -1009,7 +1017,9 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("item/fileChange/requestApproval", (payload) =>
       Effect.gen(function* () {
-        const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+        const requestId = ApprovalRequestId.make(
+          yield* randomUUIDv4("file-change-approval-request"),
+        );
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
@@ -1065,7 +1075,7 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
       Effect.gen(function* () {
-        const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+        const requestId = ApprovalRequestId.make(yield* randomUUIDv4("user-input-request"));
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
         const answers = yield* Deferred.make<ProviderUserInputAnswers>();
@@ -1265,6 +1275,15 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
+          if (hasConfiguredMcpServer(options.appServerArgs)) {
+            yield* client.request("config/mcpServer/reload", undefined).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
+                  cause,
+                }),
+              ),
+            );
+          }
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
@@ -1281,7 +1300,11 @@ export const makeCodexSessionRuntime = (
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
-              toProtocolParseError("Invalid turn/start response payload", error),
+              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+                "decode-response-payload",
+                error,
+                { method: "turn/start" },
+              ),
             ),
           );
           const turnId = TurnId.make(response.turn.id);
@@ -1314,7 +1337,11 @@ export const makeCodexSessionRuntime = (
           });
           const response = yield* decodeV2TurnSteerResponse(rawResponse).pipe(
             Effect.mapError((error) =>
-              toProtocolParseError("Invalid turn/steer response payload", error),
+              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+                "decode-response-payload",
+                error,
+                { method: "turn/steer" },
+              ),
             ),
           );
           const turnId = TurnId.make(response.turnId);

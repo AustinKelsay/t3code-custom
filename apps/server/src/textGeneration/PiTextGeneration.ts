@@ -1,5 +1,6 @@
 import { TextGenerationError, type ModelSelection, type PiSettings } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcessPlatform;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -73,7 +75,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       {
         env: environment,
         cwd: input.cwd,
-        shell: process.platform === "win32",
+        shell: platform === "win32",
         stdin: {
           stream: Stream.encodeText(Stream.make(input.prompt)),
         },

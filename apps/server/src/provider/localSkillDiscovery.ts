@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Local skill discovery scans filesystem paths before Effect services are wired.
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
@@ -44,7 +44,7 @@ function firstMarkdownParagraph(markdown: string): string | undefined {
 
 function readSkillDescription(skillPath: string): string | undefined {
   try {
-    const markdown = NodeFs.readFileSync(skillPath, "utf8");
+    const markdown = NodeFS.readFileSync(skillPath, "utf8");
     return frontmatterDescription(markdown) ?? firstMarkdownParagraph(markdown);
   } catch {
     return undefined;
@@ -52,17 +52,17 @@ function readSkillDescription(skillPath: string): string | undefined {
 }
 
 export function discoverLocalProviderSkills(root: string): ReadonlyArray<ServerProviderSkill> {
-  if (!NodeFs.existsSync(root)) {
+  if (!NodeFS.existsSync(root)) {
     return [];
   }
 
-  return NodeFs.readdirSync(root, { withFileTypes: true })
+  return NodeFS.readdirSync(root, { withFileTypes: true })
     .filter(
       (entry) => !entry.name.startsWith(".") && (entry.isDirectory() || entry.isSymbolicLink()),
     )
     .flatMap((entry) => {
       const skillPath = NodePath.join(root, entry.name, "SKILL.md");
-      if (!NodeFs.existsSync(skillPath)) {
+      if (!NodeFS.existsSync(skillPath)) {
         return [];
       }
 
@@ -83,11 +83,11 @@ export function discoverLocalProviderSkills(root: string): ReadonlyArray<ServerP
 }
 
 export function discoverCursorSkills(): ReadonlyArray<ServerProviderSkill> {
-  return discoverLocalProviderSkills(NodePath.join(NodeOs.homedir(), ".cursor", "skills-cursor"));
+  return discoverLocalProviderSkills(NodePath.join(NodeOS.homedir(), ".cursor", "skills-cursor"));
 }
 
 export function discoverOpenCodeSkills(): ReadonlyArray<ServerProviderSkill> {
   return discoverLocalProviderSkills(
-    NodePath.join(NodeOs.homedir(), ".config", "opencode", "skills"),
+    NodePath.join(NodeOS.homedir(), ".config", "opencode", "skills"),
   );
 }

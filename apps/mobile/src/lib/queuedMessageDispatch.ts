@@ -1,7 +1,7 @@
-import type { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { ClientOrchestrationCommand } from "@t3tools/contracts";
 
-import type { QueuedThreadMessage } from "./threadActivity";
+import type { QueuedThreadMessage } from "../state/thread-outbox-model";
 
 type QueuedMessageDispatchCommand = Extract<
   ClientOrchestrationCommand,
@@ -11,7 +11,7 @@ type QueuedMessageDispatchCommand = Extract<
 export function buildQueuedMessageDispatchCommand(input: {
   readonly queuedMessage: QueuedThreadMessage;
   readonly thread: Pick<
-    EnvironmentScopedThreadShell,
+    EnvironmentThreadShell,
     "id" | "runtimeMode" | "interactionMode" | "session"
   >;
 }): QueuedMessageDispatchCommand {
