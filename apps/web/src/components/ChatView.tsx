@@ -210,6 +210,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  filterQueuedTurnMessagesFromTimeline,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
   type FollowUpBehaviorOverride,
@@ -221,10 +222,12 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveComposerLocalDispatchDelivery,
   resolveProviderTurnSteeringSupport,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldAppendOptimisticUserMessageForComposerSend,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -2094,7 +2097,10 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
-    const messages = displayServerMessages;
+    const messages = filterQueuedTurnMessagesFromTimeline(
+      displayServerMessages,
+      activeThread?.queuedTurns ?? [],
+    );
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -2145,7 +2151,12 @@ function ChatViewContent(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  }, [
+    activeThread?.queuedTurns,
+    attachmentPreviewHandoffByMessageId,
+    displayServerMessages,
+    optimisticUserMessages,
+  ]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -3766,14 +3777,18 @@ function ChatViewContent(props: ChatViewProps) {
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const activeTurnIdForSend = activeThread.session?.activeTurnId ?? null;
-    const delivery =
-      phase === "running" &&
-      resolveProviderTurnSteeringSupport(activeProviderStatus) === "native" &&
-      settings.followUpBehavior === "steer" &&
-      activeTurnIdForSend &&
-      composerImagesSnapshot.length === 0
-        ? "steer"
-        : "queue";
+    const providerTurnSteering = resolveProviderTurnSteeringSupport(activeProviderStatus);
+    const delivery = resolveComposerLocalDispatchDelivery({
+      phase,
+      activeTurnId: activeTurnIdForSend,
+      followUpBehavior: settings.followUpBehavior,
+      followUpBehaviorOverride: options?.followUpBehaviorOverride,
+      providerTurnSteering,
+      attachmentCount: composerImagesSnapshot.length,
+    });
+    const shouldAppendOptimisticUserMessage = shouldAppendOptimisticUserMessageForComposerSend({
+      phase,
+    });
     sendInFlightRef.current = true;
     beginLocalDispatch({
       preparingWorktree: Boolean(baseBranchForWorktree),
@@ -3804,27 +3819,29 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Scroll to the current end *before* adding the optimistic message.
-    // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
-    // automatically pins to the new item when the data changes.
-    isAtEndRef.current = true;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    await legendListRef.current?.scrollToEnd?.({ animated: false });
+    if (shouldAppendOptimisticUserMessage) {
+      // Scroll to the current end *before* adding the optimistic message.
+      // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
+      // automatically pins to the new item when the data changes.
+      isAtEndRef.current = true;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+    }
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -3951,7 +3968,7 @@ function ChatViewContent(props: ChatViewProps) {
         ...(bootstrap ? { bootstrap } : {}),
         followUpBehavior: settings.followUpBehavior,
         followUpBehaviorOverride: options?.followUpBehaviorOverride,
-        providerTurnSteering: resolveProviderTurnSteeringSupport(activeProviderStatus),
+        providerTurnSteering,
       });
       beginLocalDispatch({
         preparingWorktree: false,

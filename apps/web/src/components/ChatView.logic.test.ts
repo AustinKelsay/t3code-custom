@@ -18,11 +18,14 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  filterQueuedTurnMessagesFromTimeline,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveComposerLocalDispatchDelivery,
   resolveSendEnvMode,
+  shouldAppendOptimisticUserMessageForComposerSend,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -80,6 +83,46 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+function makeChatMessage(input: {
+  id: MessageId;
+  role?: "user" | "assistant";
+  text: string;
+  createdAt?: string;
+}): Thread["messages"][number] {
+  const createdAt = input.createdAt ?? now;
+  return {
+    id: input.id,
+    role: input.role ?? "user",
+    text: input.text,
+    turnId: null,
+    createdAt,
+    updatedAt: createdAt,
+    streaming: false,
+  };
+}
+
+function makeQueuedTurn(input: {
+  messageId: MessageId;
+  text?: string;
+  status?: Thread["queuedTurns"][number]["status"];
+}): Thread["queuedTurns"][number] {
+  return {
+    queueItemId: TurnQueueItemId.make(`queue-item-${input.messageId}`),
+    request: {
+      message: {
+        messageId: input.messageId,
+        role: "user",
+        text: input.text ?? "queued follow-up",
+        attachments: [],
+      },
+    },
+    status: input.status ?? "pending",
+    failureReason: null,
+    createdAt: "2026-03-29T00:01:00.000Z",
+    updatedAt: "2026-03-29T00:01:00.000Z",
+  };
+}
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -238,6 +281,117 @@ describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("resolveComposerLocalDispatchDelivery", () => {
+  it("tracks queued follow-ups while a turn is running", () => {
+    expect(
+      resolveComposerLocalDispatchDelivery({
+        phase: "running",
+        activeTurnId: TurnId.make("turn-active"),
+        followUpBehavior: "queue",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toBe("queue");
+  });
+
+  it("tracks native steer only when the running turn can accept it", () => {
+    const activeTurnId = TurnId.make("turn-active");
+
+    expect(
+      resolveComposerLocalDispatchDelivery({
+        phase: "running",
+        activeTurnId,
+        followUpBehavior: "steer",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toBe("steer");
+    expect(
+      resolveComposerLocalDispatchDelivery({
+        phase: "running",
+        activeTurnId,
+        followUpBehavior: "steer",
+        followUpBehaviorOverride: "queue",
+        providerTurnSteering: "native",
+        attachmentCount: 0,
+      }),
+    ).toBe("queue");
+    expect(
+      resolveComposerLocalDispatchDelivery({
+        phase: "running",
+        activeTurnId,
+        followUpBehavior: "steer",
+        providerTurnSteering: "native",
+        attachmentCount: 1,
+      }),
+    ).toBe("queue");
+  });
+
+  it("uses normal turn acknowledgement delivery when no turn is running", () => {
+    expect(
+      resolveComposerLocalDispatchDelivery({
+        phase: "ready",
+        activeTurnId: null,
+        followUpBehavior: "queue",
+        providerTurnSteering: "unsupported",
+        attachmentCount: 1,
+      }),
+    ).toBe("steer");
+  });
+});
+
+describe("shouldAppendOptimisticUserMessageForComposerSend", () => {
+  it("only appends optimistic user bubbles for sends that can start a new turn", () => {
+    expect(shouldAppendOptimisticUserMessageForComposerSend({ phase: "ready" })).toBe(true);
+    expect(shouldAppendOptimisticUserMessageForComposerSend({ phase: "disconnected" })).toBe(true);
+    expect(shouldAppendOptimisticUserMessageForComposerSend({ phase: "connecting" })).toBe(true);
+    expect(shouldAppendOptimisticUserMessageForComposerSend({ phase: "running" })).toBe(false);
+  });
+});
+
+describe("filterQueuedTurnMessagesFromTimeline", () => {
+  it("hides unresolved queued user messages from the normal transcript", () => {
+    const queuedMessageId = MessageId.make("message-queued-hidden");
+    const visibleMessageId = MessageId.make("message-visible");
+    const messages = [
+      makeChatMessage({
+        id: visibleMessageId,
+        text: "already sent",
+      }),
+      makeChatMessage({
+        id: queuedMessageId,
+        text: "still waiting in outbox",
+      }),
+    ];
+
+    expect(
+      filterQueuedTurnMessagesFromTimeline(messages, [
+        makeQueuedTurn({ messageId: queuedMessageId, text: "still waiting in outbox" }),
+      ]),
+    ).toEqual([messages[0]]);
+  });
+
+  it("keeps assistant rows and unrelated user rows visible", () => {
+    const queuedMessageId = MessageId.make("message-queued-hidden");
+    const assistantMessage = makeChatMessage({
+      id: queuedMessageId,
+      role: "assistant",
+      text: "same id shape, not a queued user row",
+    });
+    const unrelatedUserMessage = makeChatMessage({
+      id: MessageId.make("message-unrelated"),
+      text: "normal turn message",
+    });
+
+    expect(
+      filterQueuedTurnMessagesFromTimeline(
+        [assistantMessage, unrelatedUserMessage],
+        [makeQueuedTurn({ messageId: queuedMessageId })],
+      ),
+    ).toEqual([assistantMessage, unrelatedUserMessage]);
   });
 });
 
@@ -494,24 +648,23 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: completedTurn,
         session: runningSession,
+        messages: [makeChatMessage({ id: messageId, text: "queued follow-up" })],
+        queuedTurns: [],
+        steerEntries: [],
+        activities: [],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: completedTurn,
+        session: runningSession,
         messages: [],
-        queuedTurns: [
-          {
-            queueItemId: TurnQueueItemId.make("queue-item-1"),
-            request: {
-              message: {
-                messageId,
-                role: "user",
-                text: "queued follow-up",
-                attachments: [],
-              },
-            },
-            status: "pending",
-            failureReason: null,
-            createdAt: "2026-03-29T00:01:00.000Z",
-            updatedAt: "2026-03-29T00:01:00.000Z",
-          },
-        ],
+        queuedTurns: [makeQueuedTurn({ messageId })],
         steerEntries: [],
         activities: [],
         hasPendingApproval: false,

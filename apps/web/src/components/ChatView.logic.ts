@@ -85,6 +85,46 @@ export function resolveFollowUpBehavior(input: {
   return { behavior: "steer", requestedBehavior: "steer", fallbackReason: null };
 }
 
+export function resolveComposerLocalDispatchDelivery(input: {
+  readonly phase: SessionPhase;
+  readonly activeTurnId: TurnId | null | undefined;
+  readonly followUpBehavior: FollowUpBehavior;
+  readonly followUpBehaviorOverride?: FollowUpBehaviorOverride;
+  readonly providerTurnSteering?: ProviderTurnSteeringSupport;
+  readonly attachmentCount: number;
+}): "queue" | "steer" {
+  const effectiveFollowUpBehavior = resolveFollowUpBehavior({
+    setting: input.followUpBehavior,
+    override: input.followUpBehaviorOverride,
+    activeTurnState: input.phase === "running" && input.activeTurnId ? "active" : "inactive",
+    providerTurnSteering: input.providerTurnSteering ?? "native",
+    attachmentCount: input.attachmentCount,
+  });
+  return input.phase === "running" && effectiveFollowUpBehavior.behavior === "queue"
+    ? "queue"
+    : "steer";
+}
+
+export function shouldAppendOptimisticUserMessageForComposerSend(input: {
+  readonly phase: SessionPhase;
+}): boolean {
+  return input.phase !== "running";
+}
+
+export function filterQueuedTurnMessagesFromTimeline(
+  messages: ReadonlyArray<ChatMessage>,
+  queuedTurns: Thread["queuedTurns"],
+): ReadonlyArray<ChatMessage> {
+  if (messages.length === 0 || queuedTurns.length === 0) {
+    return messages;
+  }
+  const queuedMessageIds = new Set(queuedTurns.map((turn) => turn.request.message.messageId));
+  const filteredMessages = messages.filter(
+    (message) => message.role !== "user" || !queuedMessageIds.has(message.id),
+  );
+  return filteredMessages.length === messages.length ? messages : filteredMessages;
+}
+
 export type ComposerTurnDispatchCommand = Extract<
   ClientOrchestrationCommand,
   { type: "thread.turn.start" | "thread.turn.queue" | "thread.turn.steer" }
@@ -117,15 +157,16 @@ export function buildComposerTurnDispatch(input: {
     text: input.text,
     attachments: [...input.attachments],
   };
-  const effectiveFollowUpBehavior = resolveFollowUpBehavior({
-    setting: input.followUpBehavior,
-    override: input.followUpBehaviorOverride,
-    activeTurnState: input.phase === "running" && input.activeTurnId ? "active" : "inactive",
+  const delivery = resolveComposerLocalDispatchDelivery({
+    phase: input.phase,
+    activeTurnId: input.activeTurnId,
+    followUpBehavior: input.followUpBehavior,
+    followUpBehaviorOverride: input.followUpBehaviorOverride,
     providerTurnSteering: input.providerTurnSteering ?? "native",
     attachmentCount: input.attachments.length,
   });
 
-  if (input.phase === "running" && effectiveFollowUpBehavior.behavior === "queue") {
+  if (input.phase === "running" && delivery === "queue") {
     return {
       delivery: "queue",
       command: {
@@ -138,11 +179,7 @@ export function buildComposerTurnDispatch(input: {
     };
   }
 
-  if (
-    input.phase === "running" &&
-    input.activeTurnId &&
-    effectiveFollowUpBehavior.behavior === "steer"
-  ) {
+  if (input.phase === "running" && input.activeTurnId && delivery === "steer") {
     return {
       delivery: "steer",
       command: {
@@ -589,10 +626,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.localDispatch.delivery === "queue" && input.localDispatch.messageId !== null) {
     const messageId = input.localDispatch.messageId;
     // Queue-mode dispatch is acknowledged once the server durably reflects the
-    // message into thread state, not when a later turn eventually starts.
-    return (
-      input.messages.some((message) => message.id === messageId && message.role === "user") ||
-      input.queuedTurns.some((queuedTurn) => queuedTurn.request.message.messageId === messageId)
+    // queued turn, not when the queue command's user message event reaches the
+    // transcript projection.
+    return input.queuedTurns.some(
+      (queuedTurn) => queuedTurn.request.message.messageId === messageId,
     );
   }
 
