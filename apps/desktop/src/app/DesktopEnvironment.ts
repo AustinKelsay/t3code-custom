@@ -76,7 +76,7 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code Skills";
+const APP_BASE_NAME = "T3 Code Local";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -197,10 +197,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.skills.dev" : "com.t3tools.t3code.skills",
+      isDevelopment ? "com.t3tools.t3code.local.dev" : "com.t3tools.t3code.local",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-skills-dev.desktop" : "t3code-skills.desktop",
-    linuxWmClass: isDevelopment ? "t3code-skills-dev" : "t3code-skills",
+    linuxDesktopEntryName: isDevelopment ? "t3code-local-dev.desktop" : "t3code-local.desktop",
+    linuxWmClass: isDevelopment ? "t3code-local-dev" : "t3code-local",
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),

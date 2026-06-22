@@ -12,7 +12,7 @@ vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
   session: {
     fromPartition: vi.fn(() => ({
-      getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code-skills/1.2.3"),
+      getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code-local/1.2.3"),
       setPermissionRequestHandler: vi.fn(),
       setUserAgent: vi.fn(),
     })),
@@ -179,8 +179,8 @@ function makeTestLayer(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
-          isBrowserPartition: (partition) => partition.startsWith("persist:t3code-skills-preview-"),
-          getBrowserPartition: () => Effect.succeed("persist:t3code-skills-preview-test"),
+          isBrowserPartition: (partition) => partition.startsWith("persist:t3code-local-preview-"),
+          getBrowserPartition: () => Effect.succeed("persist:t3code-local-preview-test"),
         }),
       ),
     ),
@@ -191,19 +191,19 @@ describe("DesktopWindow", () => {
   it("recognizes only same-origin renderer navigations", () => {
     assert.isTrue(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code-skills://app/",
-        navigationUrl: "t3code-skills://app/settings/connections",
+        applicationUrl: "t3code-local://app/",
+        navigationUrl: "t3code-local://app/settings/connections",
       }),
     );
     assert.isFalse(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code-skills://app/",
+        applicationUrl: "t3code-local://app/",
         navigationUrl: "https://accounts.microsoft.com/oauth",
       }),
     );
     assert.isFalse(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code-skills://app/",
+        applicationUrl: "t3code-local://app/",
         navigationUrl: "not a url",
       }),
     );
@@ -231,7 +231,7 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-skills-dev://app/"]);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-local-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),

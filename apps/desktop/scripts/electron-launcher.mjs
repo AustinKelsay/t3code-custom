@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code Skills (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "T3 Code Local (Dev)" instead of "electron"
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -15,11 +15,11 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code Skills (Dev)" : "T3 Code Skills";
+export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code Local (Dev)" : "T3 Code Local";
 export const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.skills.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code.skills";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-skills-dev"] : ["t3code-skills"];
+  ? `com.t3tools.t3code.local.dev.${devBundleIdSuffix || "local"}`
+  : "com.t3tools.t3code.local";
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-local-dev"] : ["t3code-local"];
 const LAUNCHER_VERSION = 12;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(

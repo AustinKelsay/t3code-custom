@@ -99,5 +99,5 @@ Queue is the default behavior. Steer is available as an explicit alternate behav
 
 ## Further Notes
 
-- Fork Issues are enabled for `AustinKelsay/t3code-custom`; this PRD is tracked by issue #5 and the implementation slices by issues #6-#13.
+- Fork Issues are enabled for `AustinKelsay/t3code-local`; this PRD is tracked by issue #5 and the implementation slices by issues #6-#13.
 - Upstream references: issue #231 describes accepted Queue/Steer product direction; issue #1462 requests configurable follow-up behavior; PR #1479 is useful design reference; PR #2724 is the preferred queued turn foundation.

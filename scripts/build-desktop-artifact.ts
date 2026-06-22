@@ -30,7 +30,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code.skills";
+const DESKTOP_APP_ID = "com.t3tools.t3code.local";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1278,8 +1278,8 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code Skills (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code Skills");
+    ? "T3 Code Local (Nightly)"
+    : (desktopPackageJson.productName ?? "T3 Code Local");
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -1299,7 +1299,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-Skills-${version}-${arch}.${ext}",
+    artifactName: "T3-Code-Local-${version}-${arch}.${ext}",
     asarUnpack: [...DESKTOP_ASAR_UNPACK],
     directories: {
       buildResources: "apps/desktop/resources",
@@ -1325,8 +1325,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code Skills",
-          schemes: ["t3code-skills", "t3code-skills-dev"],
+          name: "T3 Code Local",
+          schemes: ["t3code-local", "t3code-local-dev"],
         },
       ],
       ...(macPasskeySigning
@@ -1341,12 +1341,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code-skills",
+      executableName: "t3code-local",
       icon: "icons",
       category: "Development",
       desktop: {
         entry: {
-          StartupWMClass: "t3code-skills",
+          StartupWMClass: "t3code-local",
         },
       },
     };
@@ -1561,13 +1561,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   };
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
-    name: "t3code-skills",
+    name: "t3code-local",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code Skills desktop build",
+    description: "T3 Code Local desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
