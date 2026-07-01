@@ -30,6 +30,23 @@ describe("ClientSettings.followUpBehavior", () => {
   });
 });
 
+describe("ClientSettings word wrap", () => {
+  it("defaults word wrap on", () => {
+    expect(decodeClientSettings({}).wordWrap).toBe(true);
+  });
+
+  it("ignores obsolete wrapping preferences", () => {
+    const decoded = decodeClientSettings({
+      chatWordWrap: false,
+      diffWordWrap: false,
+    });
+
+    expect(decoded.wordWrap).toBe(true);
+    expect(decoded).not.toHaveProperty("chatWordWrap");
+    expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
